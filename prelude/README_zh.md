@@ -1,10 +1,10 @@
 # Prelude（前奏）
 
-> 开场乐章 - RAG + 极简 Agent 实验场
+> Crypto research agent 系列 - RAG + 极简 Agent 实验场
 
 [English](README.md) | [中文](README_zh.md)
 
-《乐章系列》的第一篇。用极简技术栈验证核心的 RAG + Agent 能力。
+Crypto research agent 系列的第一篇。用极简技术栈验证核心的 RAG + Agent 能力。
 
 ## 架构
 
@@ -187,7 +187,7 @@ prelude/
 | 嵌入模型 | BGE-m3 |
 | 向量库 | Chroma |
 
-## 乐章系列
+## Crypto Research Agent 系列
 
 | 名称 | 含义 | 状态 |
 |------|------|------|

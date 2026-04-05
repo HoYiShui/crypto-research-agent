@@ -1,10 +1,10 @@
 # Prelude
 
-> Opening movement - RAG + Minimal Agent experimental playground
+> Crypto research agent series - RAG + Minimal Agent experimental playground
 
 [English](README.md) | [中文](README_zh.md)
 
-First chapter of the Musical Movements series. Verifying core RAG + Agent capabilities with a minimalist tech stack.
+Initial milestone in the Crypto Research Agent series, focused on validating core RAG and minimal agent capabilities.
 
 ## Architecture
 
@@ -187,7 +187,7 @@ prelude/
 | Embedding | BGE-m3 |
 | Vector DB | Chroma |
 
-## Musical Movements Series
+## Crypto Research Agent Series
 
 | Name | Meaning | Status |
 |------|---------|--------|
