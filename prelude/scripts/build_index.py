@@ -121,8 +121,27 @@ async def crawl_and_index(
     # ── Step 1: Crawl (or load from disk) ──────────────────────────────────────
     pages = []
 
-    if not skip_crawl and not rebuild:
-        # Check if HTML files already exist
+    if rebuild and not skip_crawl:
+        # Full recrawl + rebuild
+        print("\n[Step 1/4] Rebuild mode: crawling fresh...")
+        if raw_html_dir.exists():
+            import shutil
+            shutil.rmtree(raw_html_dir)
+        crawler = GitBookCrawler(
+            base_url=base_url,
+            output_dir=str(raw_html_dir)
+        )
+        pages = await crawler.crawl(max_pages=max_pages)
+    elif skip_crawl:
+        # Reuse existing HTML (works for both rebuild/non-rebuild)
+        pages = load_existing_html(raw_html_dir, base_url=base_url)
+        if not pages:
+            print("Error: --skip-crawl specified but no HTML files found. Run without --skip-crawl first.")
+            sys.exit(1)
+        mode = "rebuild mode: loaded" if rebuild else "loaded"
+        print(f"\n[Step 1/4] {mode} {len(pages)} HTML files from disk")
+    else:
+        # Default behavior: reuse existing HTML when available, otherwise crawl
         existing = load_existing_html(raw_html_dir, base_url=base_url)
         if existing:
             print(f"\n[Step 1/4] Loading {len(existing)} existing HTML files from disk (skip crawl)")
@@ -134,23 +153,6 @@ async def crawl_and_index(
                 output_dir=str(raw_html_dir)
             )
             pages = await crawler.crawl(max_pages=max_pages)
-    elif skip_crawl and rebuild:
-        print("\n[Step 1/4] Rebuild mode: crawling fresh...")
-        if raw_html_dir.exists():
-            import shutil
-            shutil.rmtree(raw_html_dir)
-        crawler = GitBookCrawler(
-            base_url=base_url,
-            output_dir=str(raw_html_dir)
-        )
-        pages = await crawler.crawl(max_pages=max_pages)
-    else:
-        # skip_crawl=True, try to load from disk
-        pages = load_existing_html(raw_html_dir, base_url=base_url)
-        if not pages:
-            print("Error: --skip-crawl specified but no HTML files found. Run without --skip-crawl first.")
-            sys.exit(1)
-        print(f"\n[Step 1/4] Loaded {len(pages)} HTML files from disk")
 
     print(f"Crawl/Load complete: {len(pages)} pages")
 

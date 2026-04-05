@@ -4,7 +4,7 @@
 
 一个有实时数据获取能力的 crypto 研究助手，能执行人类分析师的投研工作流中的数据密集型环节。核心价值不是"生成报告"，而是在交互式投研过程中快速响应数据查询与定量推演请求。
 
-**竞品分析**: → [crypto_agent_competitive_analysis_v1.md](./crypto_agent_competitive_analysis.md)
+**竞品分析**: → [crypto_agent_competitive_analysis_v1.md](./crypto_agent_competitive_analysis_v1.md)
 
 ## 需求分析（基于真实投研工作流）
 
