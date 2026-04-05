@@ -1,0 +1,5 @@
+{
+  "base_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/",
+  "max_pages": 100,
+  "model": "sentence-transformers/all-MiniLM-L6-v2"
+}
