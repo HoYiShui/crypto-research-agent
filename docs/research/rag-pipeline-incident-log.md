@@ -25,6 +25,9 @@ The error was raised inside `sentence_transformers` / `transformers` attention f
 
 This is a memory pressure issue triggered by long-sequence attention cost on large chunks, amplified by batch encoding. In practice: some chunks are too large for stable `bge-m3` embedding on current machine settings.
 
+For step-by-step memory estimation and intuition (beginner-friendly), see:
+`docs/research/bge-m3-attention-memory-estimation.md`.
+
 ### Immediate notes
 
 - This is independent from crawl stability issues.
