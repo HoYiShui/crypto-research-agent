@@ -1,0 +1,20 @@
+# Global defaults for RAG pipeline runtime.
+# Source registry (site list) remains in config/craw_list.json.
+
+crawl:
+  # Fallback max pages per enabled site when craw_list.json does not define max_page.
+  default_max_page: 50
+
+chunking:
+  # Hard token budget per chunk for embedding.
+  max_tokens_per_chunk: 1024
+  # Warning threshold (reserved for diagnostics/logging).
+  warn_tokens_per_chunk: 768
+
+embedding:
+  model: BAAI/bge-m3
+  # Keep batch size conservative for 16G-class machines.
+  batch_size: 4
+  # Truncate long sequences to control attention memory growth.
+  max_seq_length: 1024
+  normalize_embeddings: true

@@ -29,6 +29,7 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from app.agent.agent_loop import MinimalAgent
+from rag.pipeline_config import get_embedding_config
 
 
 def send(msg: dict):
@@ -37,7 +38,7 @@ def send(msg: dict):
 
 
 class PiBridge:
-    DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+    DEFAULT_EMBEDDING_MODEL = str(get_embedding_config().get("model", "BAAI/bge-m3"))
 
     def __init__(self):
         self.agent: MinimalAgent | None = None

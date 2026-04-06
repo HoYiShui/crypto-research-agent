@@ -2,10 +2,9 @@
 Semantic Chunker: Convert MarkdownBlock[] to Document[]
 """
 from dataclasses import dataclass, field
-from typing import Optional
-from pathlib import Path
 
 from rag.parsers.markdown_parser import MarkdownBlock, block_to_embedding_text
+from rag.pipeline_config import get_chunking_config
 
 
 @dataclass
@@ -50,10 +49,25 @@ class SemanticChunker:
     - Code blocks: whole function as one chunk
     """
 
-    MAX_TOKENS_PER_CHUNK = 4096
-    WARN_TOKENS_PER_CHUNK = 2048
+    MAX_TOKENS_PER_CHUNK = 1024
+    WARN_TOKENS_PER_CHUNK = 768
 
-    def __init__(self):
+    def __init__(
+        self,
+        max_tokens_per_chunk: int | None = None,
+        warn_tokens_per_chunk: int | None = None,
+    ):
+        cfg = get_chunking_config()
+        self.MAX_TOKENS_PER_CHUNK = int(
+            max_tokens_per_chunk
+            if max_tokens_per_chunk is not None
+            else cfg.get("max_tokens_per_chunk", self.MAX_TOKENS_PER_CHUNK)
+        )
+        self.WARN_TOKENS_PER_CHUNK = int(
+            warn_tokens_per_chunk
+            if warn_tokens_per_chunk is not None
+            else cfg.get("warn_tokens_per_chunk", self.WARN_TOKENS_PER_CHUNK)
+        )
         self.chunk_counter = 0
 
     def _new_chunk_id(self) -> str:
@@ -240,6 +254,14 @@ class SemanticChunker:
             )
             piece_tokens = self._estimate_tokens(block_to_embedding_text(piece_block))
 
+            if piece_tokens > self.MAX_TOKENS_PER_CHUNK:
+                if bucket:
+                    chunks.append(self._make_chunk(heading_path, bucket, "text"))
+                    bucket = []
+                    bucket_tokens = 0
+                chunks.extend(self._split_single_oversized_piece(heading_path, block, piece))
+                continue
+
             if bucket and bucket_tokens + piece_tokens > self.MAX_TOKENS_PER_CHUNK:
                 chunks.append(self._make_chunk(heading_path, bucket, "text"))
                 bucket = [piece_block]
@@ -253,6 +275,81 @@ class SemanticChunker:
 
         return chunks
 
+    def _split_single_oversized_piece(
+        self,
+        heading_path: tuple,
+        block: MarkdownBlock,
+        piece: str,
+    ) -> list[Chunk]:
+        """
+        Split one oversized text piece by whitespace token budget.
+        This is a final fallback to guarantee chunk size constraints.
+        """
+        words = piece.split()
+        if not words:
+            return [self._make_chunk(heading_path, [block], "text")]
+
+        chunks: list[Chunk] = []
+        bucket_words: list[str] = []
+
+        def flush_bucket() -> None:
+            nonlocal bucket_words
+            if not bucket_words:
+                return
+            text = " ".join(bucket_words)
+            piece_block = MarkdownBlock(
+                block_id=block.block_id,
+                heading_path=block.heading_path,
+                heading_level=block.heading_level,
+                block_type=block.block_type,
+                content=text,
+                source_url=block.source_url,
+                raw_markdown=text,
+            )
+            chunks.append(self._make_chunk(heading_path, [piece_block], "text"))
+            bucket_words = []
+
+        for word in words:
+            candidate_words = bucket_words + [word]
+            candidate_text = " ".join(candidate_words)
+            candidate_block = MarkdownBlock(
+                block_id=block.block_id,
+                heading_path=block.heading_path,
+                heading_level=block.heading_level,
+                block_type=block.block_type,
+                content=candidate_text,
+                source_url=block.source_url,
+                raw_markdown=candidate_text,
+            )
+            candidate_tokens = self._estimate_tokens(block_to_embedding_text(candidate_block))
+
+            if not bucket_words and candidate_tokens > self.MAX_TOKENS_PER_CHUNK:
+                # Extremely long standalone token/word fallback.
+                text = word
+                while text:
+                    window = text[:256]
+                    text = text[256:]
+                    piece_block = MarkdownBlock(
+                        block_id=block.block_id,
+                        heading_path=block.heading_path,
+                        heading_level=block.heading_level,
+                        block_type=block.block_type,
+                        content=window,
+                        source_url=block.source_url,
+                        raw_markdown=window,
+                    )
+                    chunks.append(self._make_chunk(heading_path, [piece_block], "text"))
+                continue
+
+            if bucket_words and candidate_tokens > self.MAX_TOKENS_PER_CHUNK:
+                flush_bucket()
+                bucket_words = [word]
+            else:
+                bucket_words = candidate_words
+
+        flush_bucket()
+        return chunks
+
     def _estimate_tokens(self, text: str) -> int:
         """Estimate token count (simple: chars/4)"""
         try:
@@ -264,8 +361,15 @@ class SemanticChunker:
             return len(text) // 4
 
 
-def blocks_to_documents(blocks: list[MarkdownBlock]) -> list[Document]:
+def blocks_to_documents(
+    blocks: list[MarkdownBlock],
+    max_tokens_per_chunk: int | None = None,
+    warn_tokens_per_chunk: int | None = None,
+) -> list[Document]:
     """Convert MarkdownBlocks to LangChain Documents"""
-    chunker = SemanticChunker()
+    chunker = SemanticChunker(
+        max_tokens_per_chunk=max_tokens_per_chunk,
+        warn_tokens_per_chunk=warn_tokens_per_chunk,
+    )
     chunks = chunker.chunk(blocks)
     return [chunk.to_document() for chunk in chunks]

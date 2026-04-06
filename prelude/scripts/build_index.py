@@ -49,11 +49,16 @@ load_dotenv()
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+from rag.pipeline_config import load_pipeline_config
 
 STAGES = ("crawl", "parse", "chunk", "embed")
 DEFAULT_CONFIG_PATH = project_root / "config" / "craw_list.json"
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
-DEFAULT_MAX_PAGE = 50
+PIPELINE_CONFIG = load_pipeline_config()
+DEFAULT_EMBEDDING_MODEL = str(PIPELINE_CONFIG.get("embedding", {}).get("model", "BAAI/bge-m3"))
+DEFAULT_EMBED_BATCH_SIZE = int(PIPELINE_CONFIG.get("embedding", {}).get("batch_size", 4))
+DEFAULT_EMBED_MAX_SEQ_LENGTH = int(PIPELINE_CONFIG.get("embedding", {}).get("max_seq_length", 1024))
+DEFAULT_CHUNK_MAX_TOKENS = int(PIPELINE_CONFIG.get("chunking", {}).get("max_tokens_per_chunk", 1024))
+DEFAULT_MAX_PAGE = int(PIPELINE_CONFIG.get("crawl", {}).get("default_max_page", 50))
 SUPPORTED_SITE_TYPES = {"gitbook"}
 
 
@@ -405,6 +410,9 @@ async def crawl_and_index(
     output_dir: str = "./data",
     model_name: str = DEFAULT_EMBEDDING_MODEL,
     max_pages: int = DEFAULT_MAX_PAGE,
+    chunk_max_tokens: int = DEFAULT_CHUNK_MAX_TOKENS,
+    embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
+    embed_max_seq_length: int = DEFAULT_EMBED_MAX_SEQ_LENGTH,
     rebuild: bool = False,
     from_stage: str | None = None,
 ):
@@ -523,7 +531,7 @@ async def crawl_and_index(
     # Step 3/4: Chunk or load chunks
     if stage_index(start_stage) <= stage_index("chunk"):
         print("\n[Step 3/4] Chunking...")
-        documents = blocks_to_documents(all_blocks)
+        documents = blocks_to_documents(all_blocks, max_tokens_per_chunk=chunk_max_tokens)
         save_documents(documents, chunks_path)
         print(f"Chunking complete: {len(documents)} chunks")
         print(f"Chunk cache: {chunks_path}")
@@ -537,7 +545,12 @@ async def crawl_and_index(
         print("\n[Step 4/4] Vectorstore already has data, skipping embed (use --rebuild to overwrite)")
     else:
         print("\n[Step 4/4] Embedding + Storing...")
-        pipeline = create_embedding_pipeline(model_name=model_name, persist_dir=str(vectorstore_dir))
+        pipeline = create_embedding_pipeline(
+            model_name=model_name,
+            persist_dir=str(vectorstore_dir),
+            batch_size=embed_batch_size,
+            max_seq_length=embed_max_seq_length,
+        )
         pipeline.add_documents(documents)
         print(f"Storage complete: {len(documents)} documents")
 
@@ -581,6 +594,12 @@ def main():
         help="Max pages to crawl for each enabled site (overrides config.max_page)",
     )
     parser.add_argument(
+        "--chunk-max-tokens",
+        type=int,
+        default=None,
+        help="Chunk token budget override (default from config/rag_pipeline.yaml)",
+    )
+    parser.add_argument(
         "--from-stage",
         type=str,
         choices=STAGES,
@@ -609,7 +628,18 @@ def main():
     if args.rebuild and not args.url and len(sites) > 1:
         print("[WARN] --rebuild without --url will recrawl all enabled sites from config.")
 
+    if args.chunk_max_tokens is not None and args.chunk_max_tokens <= 0:
+        print("Error: --chunk-max-tokens must be a positive integer")
+        sys.exit(1)
+
+    pipeline_cfg = load_pipeline_config()
+    chunk_cfg = pipeline_cfg.get("chunking", {})
+    embed_cfg = pipeline_cfg.get("embedding", {})
+
     model_name = args.model or DEFAULT_EMBEDDING_MODEL
+    chunk_max_tokens = args.chunk_max_tokens or int(chunk_cfg.get("max_tokens_per_chunk", DEFAULT_CHUNK_MAX_TOKENS))
+    embed_batch_size = int(embed_cfg.get("batch_size", DEFAULT_EMBED_BATCH_SIZE))
+    embed_max_seq_length = int(embed_cfg.get("max_seq_length", DEFAULT_EMBED_MAX_SEQ_LENGTH))
 
     asyncio.run(
         crawl_and_index(
@@ -617,6 +647,9 @@ def main():
             output_dir=args.output,
             model_name=model_name,
             max_pages=max_pages,
+            chunk_max_tokens=chunk_max_tokens,
+            embed_batch_size=embed_batch_size,
+            embed_max_seq_length=embed_max_seq_length,
             rebuild=args.rebuild,
             from_stage=args.from_stage,
         )

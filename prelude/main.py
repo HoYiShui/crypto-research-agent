@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from app.agent.agent_loop import create_agent
 from rag.embedders.embedding_pipeline import create_embedding_pipeline
+from rag.pipeline_config import get_embedding_config
 
-DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+DEFAULT_EMBEDDING_MODEL = str(get_embedding_config().get("model", "BAAI/bge-m3"))
 
 def load_vectorstore(persist_dir: str = None, model_name: str = None):
     """Load existing vectorstore"""

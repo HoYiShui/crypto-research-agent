@@ -12,6 +12,7 @@ dependencies = [
     "chromadb",
     "anthropic",
     "python-dotenv",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
