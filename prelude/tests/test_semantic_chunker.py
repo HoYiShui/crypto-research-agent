@@ -4,8 +4,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from chunkers.semantic_chunker import SemanticChunker
-from parsers.markdown_parser import MarkdownBlock
+from rag.chunkers.semantic_chunker import SemanticChunker
+from rag.parsers.markdown_parser import MarkdownBlock
 
 
 class SemanticChunkerTests(unittest.TestCase):

@@ -16,8 +16,8 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agent.agent_loop import create_agent
-from embedders.embedding_pipeline import create_embedding_pipeline
+from app.agent.agent_loop import create_agent
+from rag.embedders.embedding_pipeline import create_embedding_pipeline
 
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 

@@ -26,9 +26,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from agent.agent_loop import MinimalAgent
+from app.agent.agent_loop import MinimalAgent
 
 
 def send(msg: dict):
@@ -41,7 +41,7 @@ class PiBridge:
 
     def __init__(self):
         self.agent: MinimalAgent | None = None
-        self.project_root = Path(__file__).parent.parent
+        self.project_root = Path(__file__).resolve().parents[2]
         self._vectorstore = None
         self._vectorstore_last_error: str | None = None
         self._vectorstore_last_attempt_ts: float | None = None
@@ -67,7 +67,7 @@ class PiBridge:
         embedding_model = self._resolve_embedding_model()
 
         try:
-            from embedders.embedding_pipeline import create_embedding_pipeline
+            from rag.embedders.embedding_pipeline import create_embedding_pipeline
 
             self._vectorstore = create_embedding_pipeline(
                 model_name=embedding_model,

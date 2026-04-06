@@ -135,23 +135,19 @@ prelude/
 │   ├── src/index.ts                # 聊天界面，作为 subprocess 生成 bridge
 │   ├── package.json                # pnpm 管理，依赖 @mariozechner/pi-tui
 │   └── tsconfig.json
+├── app/                            # 运行时应用层
+│   ├── agent/                      # 极简 Agent Loop + 工具
+│   └── bridge/                     # JSONL 桥接（由 TUI 生成为 subprocess）
+├── rag/                            # RAG pipeline 层
+│   ├── crawlers/                   # HTML 抓取
+│   ├── parsers/                    # HTML/Markdown 解析
+│   ├── chunkers/                   # 语义分块
+│   └── embedders/                  # 向量化与存储
+├── config/
+│   └── craw_list.json              # 抓取源配置
+├── data/                           # Pipeline 产物与向量库
 ├── scripts/
 │   └── build_index.py             # 索引构建脚本
-├── crawlers/
-│   └── gitbook_crawler.py         # Playwright 爬虫
-├── parsers/
-│   ├── html_to_markdown.py        # HTML → Markdown
-│   └── markdown_parser.py         # Markdown → MarkdownBlock
-├── chunkers/
-│   └── semantic_chunker.py        # MarkdownBlock → Document
-├── embedders/
-│   └── embedding_pipeline.py      # Document → Chroma
-├── agent/
-│   ├── agent_loop.py              # 极简 Agent Loop（~500 行）
-│   ├── tools.py                   # 工具定义 + 处理器
-│   └── system_prompt.py           # 系统提示词
-├── bridge/
-│   └── pi_bridge.py               # JSONL 桥接（由 TUI 生成为 subprocess）
 ├── main.py                        # CLI 降级模式（无 TUI）
 ├── pyproject.toml
 ├── uv.lock

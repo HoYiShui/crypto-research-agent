@@ -135,23 +135,19 @@ prelude/
 │   ├── src/index.ts                # Chat interface, spawns bridge as subprocess
 │   ├── package.json                # pnpm, depends on @mariozechner/pi-tui
 │   └── tsconfig.json
+├── app/                            # Runtime app layer
+│   ├── agent/                      # Minimal agent loop + tools
+│   └── bridge/                     # JSONL bridge (spawned by TUI)
+├── rag/                            # RAG pipeline layer
+│   ├── crawlers/                   # Crawl HTML
+│   ├── parsers/                    # HTML/Markdown parsing
+│   ├── chunkers/                   # Semantic chunking
+│   └── embedders/                  # Embedding + vectorstore
+├── config/
+│   └── craw_list.json              # Crawl source list/config
+├── data/                           # Pipeline artifacts and vectorstore
 ├── scripts/
 │   └── build_index.py             # Index building script
-├── crawlers/
-│   └── gitbook_crawler.py         # Playwright crawler
-├── parsers/
-│   ├── html_to_markdown.py        # HTML -> Markdown
-│   └── markdown_parser.py         # Markdown -> MarkdownBlock
-├── chunkers/
-│   └── semantic_chunker.py        # MarkdownBlock -> Document
-├── embedders/
-│   └── embedding_pipeline.py      # Document -> Chroma
-├── agent/
-│   ├── agent_loop.py              # Minimal Agent Loop (~500 lines)
-│   ├── tools.py                   # Tool definitions + handlers
-│   └── system_prompt.py           # System prompt
-├── bridge/
-│   └── pi_bridge.py               # JSONL bridge (spawned by TUI)
 ├── main.py                        # CLI fallback (no TUI)
 ├── pyproject.toml
 ├── uv.lock

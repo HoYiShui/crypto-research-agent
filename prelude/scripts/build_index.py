@@ -35,7 +35,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 STAGES = ("crawl", "parse", "chunk", "embed")
-DEFAULT_CONFIG_PATH = project_root / "craw_list.json"
+DEFAULT_CONFIG_PATH = project_root / "config" / "craw_list.json"
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 
 
@@ -153,7 +153,7 @@ def vectorstore_has_data(persist_dir: str) -> bool:
 
 
 def _serialize_block_item(item: Any) -> Any:
-    from parsers.markdown_parser import MarkdownBlock
+    from rag.parsers.markdown_parser import MarkdownBlock
 
     if isinstance(item, MarkdownBlock):
         return {"__markdown_block__": _serialize_block(item)}
@@ -184,7 +184,7 @@ def _serialize_block(block: Any) -> dict[str, Any]:
 
 
 def _deserialize_block(data: dict[str, Any]):
-    from parsers.markdown_parser import MarkdownBlock
+    from rag.parsers.markdown_parser import MarkdownBlock
 
     return MarkdownBlock(
         block_id=data.get("block_id", ""),
@@ -305,11 +305,11 @@ async def crawl_and_index(
     from_stage: str | None = None,
 ):
     """Build index pipeline with resumable stages."""
-    from crawlers.gitbook_crawler import GitBookCrawler
-    from parsers.html_to_markdown import HTMLToMarkdownConverter
-    from parsers.markdown_parser import MarkdownParser
-    from chunkers.semantic_chunker import blocks_to_documents
-    from embedders.embedding_pipeline import create_embedding_pipeline
+    from rag.crawlers.gitbook_crawler import GitBookCrawler
+    from rag.parsers.html_to_markdown import HTMLToMarkdownConverter
+    from rag.parsers.markdown_parser import MarkdownParser
+    from rag.chunkers.semantic_chunker import blocks_to_documents
+    from rag.embedders.embedding_pipeline import create_embedding_pipeline
 
     start_stage = resolve_start_stage(
         skip_crawl=skip_crawl,
@@ -424,7 +424,7 @@ def main():
         "--config",
         type=str,
         default=None,
-        help="Path to config file (default: craw_list.json)",
+        help="Path to config file (default: config/craw_list.json)",
     )
     parser.add_argument(
         "--url",
@@ -482,7 +482,7 @@ def main():
     model_name = args.model or DEFAULT_EMBEDDING_MODEL
 
     if not base_url:
-        print("Error: No URL specified. Use --url or set base_url in craw_list.json")
+        print("Error: No URL specified. Use --url or set base_url in config/craw_list.json")
         sys.exit(1)
 
     if args.skip_parse and args.from_stage and args.from_stage not in {"chunk", "embed"}:

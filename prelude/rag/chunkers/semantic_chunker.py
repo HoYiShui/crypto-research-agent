@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 from pathlib import Path
 
-from parsers.markdown_parser import MarkdownBlock, block_to_embedding_text
+from rag.parsers.markdown_parser import MarkdownBlock, block_to_embedding_text
 
 
 @dataclass

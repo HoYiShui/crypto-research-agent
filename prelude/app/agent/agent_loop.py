@@ -23,8 +23,8 @@ try:
 except ImportError as e:
     raise SystemExit("Please install dependency: anthropic") from e
 
-from agent.tools import TOOL_DEFINITIONS, ToolHandlers
-from agent.system_prompt import SYSTEM_PROMPT
+from app.agent.tools import TOOL_DEFINITIONS, ToolHandlers
+from app.agent.system_prompt import SYSTEM_PROMPT
 
 
 class MinimalAgent:

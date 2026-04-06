@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from embedders.embedding_pipeline import EmbeddingPipeline
+from rag.embedders.embedding_pipeline import EmbeddingPipeline
 
 
 class EmbeddingPipelineTests(unittest.TestCase):
@@ -18,7 +18,7 @@ class EmbeddingPipelineTests(unittest.TestCase):
             "_resolve_local_snapshot_path",
             return_value=Path("/tmp/local-snapshot"),
         ), patch(
-            "embedders.embedding_pipeline.sentence_transformers.SentenceTransformer",
+            "rag.embedders.embedding_pipeline.sentence_transformers.SentenceTransformer",
             return_value=fake_model,
         ) as mocked_loader:
             model = pipeline._load_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
@@ -35,7 +35,7 @@ class EmbeddingPipelineTests(unittest.TestCase):
             "_resolve_local_snapshot_path",
             return_value=None,
         ), patch(
-            "embedders.embedding_pipeline.sentence_transformers.SentenceTransformer",
+            "rag.embedders.embedding_pipeline.sentence_transformers.SentenceTransformer",
             return_value=fake_model,
         ) as mocked_loader:
             model = pipeline._load_embedding_model("sentence-transformers/all-MiniLM-L6-v2")
@@ -51,7 +51,7 @@ class EmbeddingPipelineTests(unittest.TestCase):
             "_resolve_local_snapshot_path",
             return_value=Path("/tmp/local-snapshot"),
         ), patch(
-            "embedders.embedding_pipeline.sentence_transformers.SentenceTransformer",
+            "rag.embedders.embedding_pipeline.sentence_transformers.SentenceTransformer",
             side_effect=[RuntimeError("local failed"), RuntimeError("remote failed")],
         ):
             with self.assertRaises(RuntimeError) as ctx:

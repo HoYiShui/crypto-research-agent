@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import bridge.pi_bridge as pi_bridge
+import app.bridge.pi_bridge as pi_bridge
 
 
 class _FakeAgent:
@@ -53,7 +53,7 @@ class BridgeTests(unittest.TestCase):
         bridge._vectorstore_last_attempt_ts = 100.0
         bridge._vectorstore_retry_interval_sec = 30
 
-        with patch("bridge.pi_bridge.time.monotonic", return_value=110.0):
+        with patch("app.bridge.pi_bridge.time.monotonic", return_value=110.0):
             with self.assertRaises(RuntimeError) as ctx:
                 bridge._load_vectorstore_lazy()
 
