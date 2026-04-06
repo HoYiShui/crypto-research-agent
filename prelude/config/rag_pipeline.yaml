@@ -3,7 +3,7 @@
 
 crawl:
   # Fallback max pages per enabled site when site.max_page is not set.
-  default_max_page: 50
+  default_max_page: 200
 
 chunking:
   # Preferred operating size for chunking quality/recall balance.

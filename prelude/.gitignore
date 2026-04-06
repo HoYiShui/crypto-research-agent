@@ -11,8 +11,9 @@ build/
 # uv
 uv.lock
 
-# Data (vectorstore, crawl data)
-data/
+# Data (vectorstore, crawl data): ignore contents, keep folder placeholder.
+data/*
+!data/.gitkeep
 
 # Environment
 .env
