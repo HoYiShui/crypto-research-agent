@@ -47,7 +47,9 @@ For stage-rebuild and overrides, run `python scripts/build_index.py --help` or r
 
 Current keys:
 - `crawl.default_max_page`: fallback crawl page cap.
+- `chunking.target_tokens_per_chunk`: preferred chunk size target.
 - `chunking.max_tokens_per_chunk`: hard token budget per chunk.
+- `chunking.overlap_tokens`: overlap budget between adjacent chunks.
 - `chunking.warn_tokens_per_chunk`: warning threshold (diagnostic use).
 - `embedding.model`: default embedding model id.
 - `embedding.batch_size`: embedding encode batch size.

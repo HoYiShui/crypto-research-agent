@@ -6,15 +6,19 @@ crawl:
   default_max_page: 50
 
 chunking:
+  # Preferred operating size for chunking quality/recall balance.
+  target_tokens_per_chunk: 512
   # Hard token budget per chunk for embedding.
   max_tokens_per_chunk: 1024
+  # Planned overlap budget between adjacent chunks.
+  overlap_tokens: 96
   # Warning threshold (reserved for diagnostics/logging).
   warn_tokens_per_chunk: 768
 
 embedding:
   model: BAAI/bge-m3
   # Keep batch size conservative for 16G-class machines.
-  batch_size: 4
+  batch_size: 2
   # Truncate long sequences to control attention memory growth.
   max_seq_length: 1024
   normalize_embeddings: true

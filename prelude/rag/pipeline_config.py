@@ -17,12 +17,14 @@ DEFAULT_PIPELINE_CONFIG: dict[str, Any] = {
         "default_max_page": 50,
     },
     "chunking": {
+        "target_tokens_per_chunk": 512,
         "max_tokens_per_chunk": 1024,
+        "overlap_tokens": 96,
         "warn_tokens_per_chunk": 768,
     },
     "embedding": {
         "model": "BAAI/bge-m3",
-        "batch_size": 4,
+        "batch_size": 2,
         "max_seq_length": 1024,
         "normalize_embeddings": True,
     },
