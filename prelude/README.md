@@ -149,7 +149,9 @@ prelude/
 │   └── rag_pipeline.yaml           # RAG pipeline defaults
 ├── data/                           # Pipeline artifacts and vectorstore
 ├── scripts/
-│   └── build_index.py             # Index building script
+│   ├── build_index.py              # Index building script
+│   ├── analyze_chunks.py           # Generic chunk token distribution analysis
+│   └── investigate_chunk_outliers.py # OOM-oriented chunk outlier investigation
 ├── main.py                        # CLI fallback (no TUI)
 ├── pyproject.toml
 ├── uv.lock

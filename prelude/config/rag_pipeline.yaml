@@ -18,7 +18,7 @@ chunking:
 embedding:
   model: BAAI/bge-m3
   # Keep batch size conservative for 16G-class machines.
-  batch_size: 2
+  batch_size: 8
   # Truncate long sequences to control attention memory growth.
   max_seq_length: 1024
   normalize_embeddings: true

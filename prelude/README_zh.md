@@ -149,7 +149,9 @@ prelude/
 │   └── rag_pipeline.yaml           # RAG 管线默认参数
 ├── data/                           # Pipeline 产物与向量库
 ├── scripts/
-│   └── build_index.py             # 索引构建脚本
+│   ├── build_index.py              # 索引构建脚本
+│   ├── analyze_chunks.py           # 通用 chunk token 分布分析
+│   └── investigate_chunk_outliers.py # 面向 OOM 的异常 chunk 调查
 ├── main.py                        # CLI 降级模式（无 TUI）
 ├── pyproject.toml
 ├── uv.lock
