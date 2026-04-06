@@ -2,12 +2,12 @@
 GitBook Crawler: Crawls GitBook documentation sites
 """
 import asyncio
-from pathlib import Path
-from typing import Optional
-from urllib.parse import urljoin
 import re
+from pathlib import Path
+from urllib.parse import urljoin
 
 try:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
     from playwright.async_api import async_playwright
     from bs4 import BeautifulSoup
 except ImportError as e:
@@ -20,10 +20,26 @@ class GitBookCrawler:
     """Crawls GitBook documentation sites"""
 
     def __init__(self, base_url: str, output_dir: str = "./data/raw_html"):
-        self.base_url = base_url.rstrip('/')
+        self.base_url = base_url.rstrip("/")
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.visited_urls = set()
+
+    async def _goto_page(self, page, url: str) -> None:
+        """
+        Navigate to url with a resilient strategy:
+        - try networkidle first for fully-loaded pages
+        - fallback to domcontentloaded for sites with long-polling/streaming traffic
+        """
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=30000)
+            return
+        except PlaywrightTimeoutError:
+            print(f"[WARN] networkidle timeout for {url}, fallback to domcontentloaded")
+
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+        # Give dynamic docs pages a short settle window after DOM is ready.
+        await page.wait_for_timeout(1200)
 
     async def crawl(self, max_pages: int = 100) -> list[dict]:
         """
@@ -46,7 +62,7 @@ class GitBookCrawler:
                 print(f"Crawling: {url}")
 
                 try:
-                    await page.goto(url, wait_until="networkidle", timeout=30000)
+                    await self._goto_page(page, url)
                     content = await page.content()
                     title = await page.title()
 
