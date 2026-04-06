@@ -363,13 +363,17 @@ def resolve_start_stage(from_stage: str | None) -> str:
 def cleanup_for_rebuild(
     start_stage: str,
     raw_html_root: Path,
+    sites: list[CrawlSite],
     parsed_blocks_path: Path,
     chunks_path: Path,
     vectorstore_dir: Path,
 ) -> None:
     """Delete artifacts from start_stage onward."""
     if stage_index(start_stage) <= stage_index("crawl") and raw_html_root.exists():
-        shutil.rmtree(raw_html_root)
+        for site in sites:
+            site_raw_dir = raw_html_root / site.name
+            if site_raw_dir.exists():
+                shutil.rmtree(site_raw_dir)
 
     if stage_index(start_stage) <= stage_index("parse") and parsed_blocks_path.exists():
         parsed_blocks_path.unlink()
@@ -379,6 +383,11 @@ def cleanup_for_rebuild(
 
     if stage_index(start_stage) <= stage_index("embed") and vectorstore_dir.exists():
         shutil.rmtree(vectorstore_dir)
+
+
+def has_local_site_cache(site_raw_dir: Path) -> bool:
+    """Quick check whether local raw HTML cache exists for a site."""
+    return site_raw_dir.exists() and any(site_raw_dir.glob("*.html"))
 
 
 async def _crawl_site(site: CrawlSite, output_dir: Path, max_pages: int) -> list[dict[str, Any]]:
@@ -421,6 +430,7 @@ async def crawl_and_index(
         cleanup_for_rebuild(
             start_stage=start_stage,
             raw_html_root=raw_html_root,
+            sites=sites,
             parsed_blocks_path=parsed_blocks_path,
             chunks_path=chunks_path,
             vectorstore_dir=vectorstore_dir,
@@ -428,6 +438,7 @@ async def crawl_and_index(
 
     # Step 1/4: Crawl or load HTML
     pages: list[dict[str, Any]] = []
+    failed_sites: list[str] = []
 
     if stage_index(start_stage) <= stage_index("crawl"):
         for site in sites:
@@ -435,10 +446,14 @@ async def crawl_and_index(
             site_pages: list[dict[str, Any]]
 
             if not rebuild:
-                existing = load_existing_html(site_raw_dir, base_url=site.base_url)
-                if existing:
-                    print(f"\n[Step 1/4] Loading {len(existing)} existing HTML files for '{site.name}'")
-                    site_pages = existing
+                if has_local_site_cache(site_raw_dir):
+                    print(f"\n[Step 1/4] Found local cache for '{site.name}', skipping crawl")
+                    site_pages = load_existing_html(site_raw_dir, base_url=site.base_url)
+                    if site_pages:
+                        print(f"  Loaded {len(site_pages)} HTML files from {site_raw_dir}")
+                    else:
+                        print(f"  [WARN] Cache exists but failed to load for '{site.name}', recrawling...")
+                        site_pages = await _crawl_site(site=site, output_dir=site_raw_dir, max_pages=max_pages)
                 else:
                     print(f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url}...")
                     site_pages = await _crawl_site(site=site, output_dir=site_raw_dir, max_pages=max_pages)
@@ -447,8 +462,9 @@ async def crawl_and_index(
                 site_pages = await _crawl_site(site=site, output_dir=site_raw_dir, max_pages=max_pages)
 
             if not site_pages:
-                print(f"Error: crawling produced no pages for site '{site.name}'.")
-                sys.exit(1)
+                print(f"  [WARN] Crawling produced no pages for site '{site.name}', skipping.")
+                failed_sites.append(site.name)
+                continue
 
             for page in site_pages:
                 page["site_name"] = site.name
@@ -459,14 +475,22 @@ async def crawl_and_index(
             site_raw_dir = raw_html_root / site.name
             site_pages = load_existing_html(site_raw_dir, base_url=site.base_url)
             if not site_pages:
-                print(f"Error: no raw HTML cache found for site '{site.name}' in {site_raw_dir}")
-                sys.exit(1)
+                print(f"  [WARN] No raw HTML cache for '{site.name}' in {site_raw_dir}, skipping.")
+                failed_sites.append(site.name)
+                continue
             for page in site_pages:
                 page["site_name"] = site.name
                 page["site_base_url"] = site.base_url
             pages.extend(site_pages)
 
         print(f"\n[Step 1/4] Loaded {len(pages)} HTML files from disk")
+
+    if failed_sites:
+        print(f"[WARN] Step 1 skipped failed sites: {', '.join(failed_sites)}")
+
+    if not pages:
+        print("Error: no pages available after Step 1. Use --rebuild, --url, or fix site availability.")
+        sys.exit(1)
 
     print(f"Crawl/Load complete: {len(pages)} pages")
 
@@ -581,6 +605,9 @@ def main():
     except ValueError as exc:
         print(f"Error: {exc}")
         sys.exit(1)
+
+    if args.rebuild and not args.url and len(sites) > 1:
+        print("[WARN] --rebuild without --url will recrawl all enabled sites from config.")
 
     model_name = args.model or DEFAULT_EMBEDDING_MODEL
 
