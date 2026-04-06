@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -35,8 +34,9 @@ load_dotenv()
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-DEFAULT_CONFIG_PATH = project_root / ".crawl_config.json"
 STAGES = ("crawl", "parse", "chunk", "embed")
+DEFAULT_CONFIG_PATH = project_root / "craw_list.json"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
 
 
 @dataclass
@@ -297,7 +297,7 @@ def cleanup_for_rebuild(
 async def crawl_and_index(
     base_url: str,
     output_dir: str = "./data",
-    model_name: str = "BAAI/bge-m3",
+    model_name: str = DEFAULT_EMBEDDING_MODEL,
     max_pages: int = 50,
     skip_crawl: bool = False,
     skip_parse: bool = False,
@@ -424,7 +424,7 @@ def main():
         "--config",
         type=str,
         default=None,
-        help="Path to config file (default: .crawl_config.json)",
+        help="Path to config file (default: craw_list.json)",
     )
     parser.add_argument(
         "--url",
@@ -479,10 +479,10 @@ def main():
 
     base_url = args.url or config.get("base_url")
     max_pages = args.max_pages or config.get("max_pages", 50)
-    model_name = args.model or config.get("model", "BAAI/bge-m3")
+    model_name = args.model or DEFAULT_EMBEDDING_MODEL
 
     if not base_url:
-        print("Error: No URL specified. Use --url or set base_url in .crawl_config.json")
+        print("Error: No URL specified. Use --url or set base_url in craw_list.json")
         sys.exit(1)
 
     if args.skip_parse and args.from_stage and args.from_stage not in {"chunk", "embed"}:

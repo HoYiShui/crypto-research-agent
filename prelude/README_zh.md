@@ -93,7 +93,7 @@ MODEL=MiniMax-M2.7
 VECTORSTORE_DIR=./data/vectorstore
 
 # 可选：运行时嵌入模型覆盖
-# 优先级：EMBEDDING_MODEL > .crawl_config.json:model > BAAI/bge-m3
+# 运行时默认嵌入模型为 BAAI/bge-m3
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # 可选：懒加载失败后的重试冷却时间（秒）
@@ -102,7 +102,7 @@ VECTORSTORE_RETRY_INTERVAL_SEC=30
 
 ## RAG_UNAVAILABLE 排查
 
-- 先看模型优先级：`.env` 里的 `EMBEDDING_MODEL` 会覆盖 `.crawl_config.json`。
+- 先看模型设置：`.env` 里的 `EMBEDDING_MODEL` 会覆盖运行时默认值（`BAAI/bge-m3`）。
 - 索引构建模型与运行时模型需要一致，否则可能触发向量维度不匹配。
 - 对于已缓存模型，运行时现在会优先使用本地 HF 快照，不依赖联网下载。
 

@@ -93,7 +93,7 @@ MODEL=MiniMax-M2.7
 VECTORSTORE_DIR=./data/vectorstore
 
 # Optional: runtime embedding model override
-# Priority: EMBEDDING_MODEL > .crawl_config.json:model > BAAI/bge-m3
+# Default runtime embedding model is BAAI/bge-m3
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # Optional: retry cooldown (seconds) after lazy vectorstore init failure
@@ -102,7 +102,7 @@ VECTORSTORE_RETRY_INTERVAL_SEC=30
 
 ## Troubleshooting RAG_UNAVAILABLE
 
-- Verify model priority first: `EMBEDDING_MODEL` in `.env` overrides `.crawl_config.json`.
+- Verify model setting first: `EMBEDDING_MODEL` in `.env` overrides the runtime default (`BAAI/bge-m3`).
 - Keep index/runtime embedding models consistent to avoid vector dimension mismatch.
 - For cached models, runtime now prefers local HF snapshot and does not require network.
 

@@ -37,6 +37,8 @@ def send(msg: dict):
 
 
 class PiBridge:
+    DEFAULT_EMBEDDING_MODEL = "BAAI/bge-m3"
+
     def __init__(self):
         self.agent: MinimalAgent | None = None
         self.project_root = Path(__file__).parent.parent
@@ -44,23 +46,9 @@ class PiBridge:
         self._vectorstore_last_error: str | None = None
         self._vectorstore_last_attempt_ts: float | None = None
         self._vectorstore_retry_interval_sec = int(os.getenv("VECTORSTORE_RETRY_INTERVAL_SEC", "30"))
-        self._crawl_config = self._load_crawl_config()
-
-    def _load_crawl_config(self) -> dict:
-        config_path = self.project_root / ".crawl_config.json"
-        if not config_path.exists():
-            return {}
-        try:
-            return json.loads(config_path.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
 
     def _resolve_embedding_model(self) -> str:
-        return (
-            os.getenv("EMBEDDING_MODEL")
-            or self._crawl_config.get("model")
-            or "BAAI/bge-m3"
-        )
+        return os.getenv("EMBEDDING_MODEL") or self.DEFAULT_EMBEDDING_MODEL
 
     def _load_vectorstore_lazy(self):
         if self._vectorstore is not None:

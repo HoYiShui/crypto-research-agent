@@ -21,15 +21,10 @@ class _FakeAgent:
 class BridgeTests(unittest.TestCase):
     def test_resolve_embedding_model_priority(self):
         bridge = pi_bridge.PiBridge()
-        bridge._crawl_config = {"model": "config-model"}
 
         with patch.dict(os.environ, {"EMBEDDING_MODEL": "env-model"}, clear=False):
             self.assertEqual(bridge._resolve_embedding_model(), "env-model")
 
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(bridge._resolve_embedding_model(), "config-model")
-
-        bridge._crawl_config = {}
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(bridge._resolve_embedding_model(), "BAAI/bge-m3")
 
