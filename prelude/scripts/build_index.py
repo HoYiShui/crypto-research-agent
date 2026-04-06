@@ -10,8 +10,7 @@ Pipeline stages:
 Usage examples:
     python scripts/build_index.py
     python scripts/build_index.py --url https://dydx.exchange/blog/
-    python scripts/build_index.py --skip-crawl --rebuild
-    python scripts/build_index.py --skip-parse --rebuild
+    python scripts/build_index.py --from-stage parse --rebuild
     python scripts/build_index.py --from-stage chunk --rebuild
 """
 
@@ -254,23 +253,9 @@ def load_documents(in_path: Path) -> list[CachedDocument]:
     return docs
 
 
-def resolve_start_stage(skip_crawl: bool, skip_parse: bool, from_stage: str | None) -> str:
-    """
-    Resolve stage to start from.
-
-    Priority:
-      from_stage > skip_parse > skip_crawl > crawl
-    """
-    if from_stage:
-        return from_stage
-
-    if skip_parse:
-        return "chunk"
-
-    if skip_crawl:
-        return "parse"
-
-    return "crawl"
+def resolve_start_stage(from_stage: str | None) -> str:
+    """Resolve stage to start from, defaults to crawl."""
+    return from_stage or "crawl"
 
 
 def cleanup_for_rebuild(
@@ -299,8 +284,6 @@ async def crawl_and_index(
     output_dir: str = "./data",
     model_name: str = DEFAULT_EMBEDDING_MODEL,
     max_pages: int = 50,
-    skip_crawl: bool = False,
-    skip_parse: bool = False,
     rebuild: bool = False,
     from_stage: str | None = None,
 ):
@@ -311,11 +294,7 @@ async def crawl_and_index(
     from rag.chunkers.semantic_chunker import blocks_to_documents
     from rag.embedders.embedding_pipeline import create_embedding_pipeline
 
-    start_stage = resolve_start_stage(
-        skip_crawl=skip_crawl,
-        skip_parse=skip_parse,
-        from_stage=from_stage,
-    )
+    start_stage = resolve_start_stage(from_stage=from_stage)
 
     output_root = Path(output_dir)
     raw_html_dir = output_root / "raw_html"
@@ -342,7 +321,7 @@ async def crawl_and_index(
         if not rebuild:
             existing = load_existing_html(raw_html_dir, base_url=base_url)
             if existing:
-                print(f"\n[Step 1/4] Loading {len(existing)} existing HTML files from disk (skip crawl)")
+                print(f"\n[Step 1/4] Loading {len(existing)} existing HTML files from disk")
                 pages = existing
             else:
                 print(f"\n[Step 1/4] Crawling from {base_url}...")
@@ -451,16 +430,6 @@ def main():
         help="Max pages to crawl (overrides config)",
     )
     parser.add_argument(
-        "--skip-crawl",
-        action="store_true",
-        help="Skip crawling, use existing HTML cache (parse+chunk+embed).",
-    )
-    parser.add_argument(
-        "--skip-parse",
-        action="store_true",
-        help="Skip crawling and parsing, start from chunk stage using parsed_blocks.jsonl.",
-    )
-    parser.add_argument(
         "--from-stage",
         type=str,
         choices=STAGES,
@@ -485,18 +454,12 @@ def main():
         print("Error: No URL specified. Use --url or set base_url in config/craw_list.json")
         sys.exit(1)
 
-    if args.skip_parse and args.from_stage and args.from_stage not in {"chunk", "embed"}:
-        print("Error: --skip-parse conflicts with --from-stage crawl|parse")
-        sys.exit(1)
-
     asyncio.run(
         crawl_and_index(
             base_url=base_url,
             output_dir=args.output,
             model_name=model_name,
             max_pages=max_pages,
-            skip_crawl=args.skip_crawl,
-            skip_parse=args.skip_parse,
             rebuild=args.rebuild,
             from_stage=args.from_stage,
         )

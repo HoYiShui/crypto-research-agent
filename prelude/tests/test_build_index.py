@@ -4,10 +4,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.build_index import _extract_source_url_from_html
+from scripts.build_index import _extract_source_url_from_html, resolve_start_stage
 
 
 class BuildIndexTests(unittest.TestCase):
+    def test_resolve_start_stage_defaults_to_crawl(self):
+        self.assertEqual(resolve_start_stage(None), "crawl")
+
+    def test_resolve_start_stage_respects_explicit_stage(self):
+        self.assertEqual(resolve_start_stage("chunk"), "chunk")
+
     def test_extract_source_url_prefers_canonical(self):
         html = """
         <html>
