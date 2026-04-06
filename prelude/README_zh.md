@@ -57,26 +57,11 @@ vim .env
 ### 3. 构建索引
 
 ```bash
-# 使用 .crawl_config.json 中的默认配置
-python scripts/build_index.py
-
-# 覆盖 URL
-python scripts/build_index.py --url https://dydx.exchange/blog/
-
-# 使用自定义配置文件
-python scripts/build_index.py --config /path/to/config.json
-
-# 指定嵌入模型
-python scripts/build_index.py --model BAAI/bge-m3
-
-# 基于现有 HTML 重建分块/向量（parser/chunker 变更后推荐）
-python scripts/build_index.py --skip-crawl --rebuild
-
-# 全量重爬 + 重建（文档内容可能变化时）
+# 推荐：从当前配置的数据源全量重建索引
 python scripts/build_index.py --rebuild
 ```
 
-> **提示**：最近这轮 bug 修复没有给 `build_index.py` 新增 CLI 参数。
+> **提示**：高级/恢复模式请查看 `scripts/build_index.py` 顶部注释，或运行 `python scripts/build_index.py --help`。
 
 ### 4. 启动 Agent
 

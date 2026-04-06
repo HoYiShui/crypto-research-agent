@@ -57,26 +57,11 @@ vim .env
 ### 3. Build Index
 
 ```bash
-# Use default config from .crawl_config.json
-python scripts/build_index.py
-
-# Override URL
-python scripts/build_index.py --url https://dydx.exchange/blog/
-
-# Use custom config file
-python scripts/build_index.py --config /path/to/config.json
-
-# Specify embedding model
-python scripts/build_index.py --model BAAI/bge-m3
-
-# Rebuild embeddings/chunks from existing HTML (recommended after parser/chunker changes)
-python scripts/build_index.py --skip-crawl --rebuild
-
-# Full recrawl + rebuild (when docs may have changed)
+# Recommended: rebuild index end-to-end from your configured source
 python scripts/build_index.py --rebuild
 ```
 
-> **Note**: Recent bug fixes did not introduce new CLI parameters for `build_index.py`.
+> **Note**: For advanced or recovery workflows, see the top docstring in `scripts/build_index.py` (or run `python scripts/build_index.py --help`).
 
 ### 4. Start Agent
 
