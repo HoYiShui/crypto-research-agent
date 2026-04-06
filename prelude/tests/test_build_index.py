@@ -43,7 +43,6 @@ class BuildIndexTests(unittest.TestCase):
 
     def test_resolve_sources_uses_enabled_sites(self):
         config = {
-            "max_page": 20,
             "site": [
                 {
                     "name": "hyperliquid",
@@ -53,14 +52,13 @@ class BuildIndexTests(unittest.TestCase):
                 }
             ],
         }
-        sites, max_page = resolve_sources(config=config, url_override=None, max_pages_override=None)
-        self.assertEqual(max_page, 20)
+        sites, max_page_override = resolve_sources(config=config, url_override=None, max_pages_override=None)
+        self.assertIsNone(max_page_override)
         self.assertEqual(len(sites), 1)
         self.assertEqual(sites[0].name, "hyperliquid")
 
     def test_resolve_sources_filters_disabled_sites(self):
         config = {
-            "max_page": 10,
             "site": [
                 {
                     "name": "a",
@@ -81,7 +79,6 @@ class BuildIndexTests(unittest.TestCase):
 
     def test_resolve_sources_errors_when_no_enabled_sites(self):
         config = {
-            "max_page": 10,
             "site": [
                 {
                     "name": "a",
@@ -95,8 +92,8 @@ class BuildIndexTests(unittest.TestCase):
             resolve_sources(config=config, url_override=None, max_pages_override=None)
 
     def test_resolve_sources_accepts_url_override(self):
-        config = {"max_page": 10}
-        sites, max_page = resolve_sources(
+        config = {}
+        sites, max_page_override = resolve_sources(
             config=config,
             url_override="https://docs.example.com/",
             max_pages_override=None,
@@ -104,7 +101,37 @@ class BuildIndexTests(unittest.TestCase):
         self.assertEqual(len(sites), 1)
         self.assertEqual(sites[0].type, "gitbook")
         self.assertEqual(sites[0].base_url, "https://docs.example.com/")
-        self.assertEqual(max_page, 10)
+        self.assertIsNone(max_page_override)
+
+    def test_resolve_sources_accepts_site_level_max_page(self):
+        config = {
+            "site": [
+                {
+                    "name": "demo",
+                    "type": "gitbook",
+                    "base_url": "https://docs.example.com/",
+                    "enable": True,
+                    "max_page": 42,
+                }
+            ],
+        }
+        sites, max_page_override = resolve_sources(config=config, url_override=None, max_pages_override=None)
+        self.assertIsNone(max_page_override)
+        self.assertEqual(sites[0].max_page, 42)
+
+    def test_resolve_sources_accepts_global_max_page_override(self):
+        config = {
+            "site": [
+                {
+                    "name": "demo",
+                    "type": "gitbook",
+                    "base_url": "https://docs.example.com/",
+                    "enable": True,
+                }
+            ],
+        }
+        _, max_page_override = resolve_sources(config=config, url_override=None, max_pages_override=99)
+        self.assertEqual(max_page_override, 99)
 
     def test_has_local_site_cache_detects_html_files(self):
         with tempfile.TemporaryDirectory() as tmp:

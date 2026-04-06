@@ -145,7 +145,8 @@ prelude/
 │   ├── chunkers/                   # 语义分块
 │   └── embedders/                  # 向量化与存储
 ├── config/
-│   └── craw_list.json              # 抓取源配置
+│   ├── craw_list.yaml              # 抓取源注册表
+│   └── rag_pipeline.yaml           # RAG 管线默认参数
 ├── data/                           # Pipeline 产物与向量库
 ├── scripts/
 │   └── build_index.py             # 索引构建脚本

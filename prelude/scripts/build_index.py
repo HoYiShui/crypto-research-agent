@@ -16,18 +16,14 @@ Selected usage examples:
     python scripts/build_index.py --from-stage chunk --rebuild
     python scripts/build_index.py --url https://dydx.exchange/blog/
 
-Config schema (config/craw_list.json):
-{
-  "max_page": 50,
-  "site": [
-    {
-      "name": "hyperliquid",
-      "type": "gitbook",
-      "base_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/",
-      "enable": true
-    }
-  ]
-}
+Config schema (config/craw_list.yaml):
+site:
+  - name: hyperliquid
+    type: gitbook
+    base_url: https://hyperliquid.gitbook.io/hyperliquid-docs/
+    enable: true
+    # optional per-site override
+    # max_page: 80
 """
 
 from __future__ import annotations
@@ -44,6 +40,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 from dotenv import load_dotenv
+import yaml
 
 load_dotenv()
 
@@ -52,7 +49,7 @@ sys.path.insert(0, str(project_root))
 from rag.pipeline_config import load_pipeline_config
 
 STAGES = ("crawl", "parse", "chunk", "embed")
-DEFAULT_CONFIG_PATH = project_root / "config" / "craw_list.json"
+DEFAULT_CONFIG_PATH = project_root / "config" / "craw_list.yaml"
 PIPELINE_CONFIG = load_pipeline_config()
 DEFAULT_EMBEDDING_MODEL = str(PIPELINE_CONFIG.get("embedding", {}).get("model", "BAAI/bge-m3"))
 DEFAULT_EMBED_BATCH_SIZE = int(PIPELINE_CONFIG.get("embedding", {}).get("batch_size", 4))
@@ -68,6 +65,7 @@ class CrawlSite:
     type: str
     base_url: str
     enable: bool = True
+    max_page: int | None = None
 
 
 @dataclass
@@ -83,14 +81,18 @@ def stage_index(stage: str) -> int:
 
 
 def load_config(config_path: str | None = None) -> dict[str, Any]:
-    """Load crawl source registry from JSON file."""
+    """Load crawl source registry from YAML file."""
     path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if path.exists():
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError(f"Config must be a JSON object: {path}")
-            return data
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ValueError(f"Config parse failed for {path}: {exc}") from exc
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise ValueError(f"Config must be a YAML mapping object: {path}")
+        return data
     return {}
 
 
@@ -136,20 +138,29 @@ def _parse_site(item: Any, index: int) -> CrawlSite:
     if not isinstance(enable_raw, bool):
         raise ValueError(f"site[{index}].enable must be boolean")
 
-    return CrawlSite(name=name, type=site_type, base_url=base_url, enable=enable_raw)
+    max_page_raw = item.get("max_page")
+    max_page = None
+    if max_page_raw is not None:
+        max_page = _parse_positive_int(max_page_raw, field=f"site[{index}].max_page")
+
+    return CrawlSite(
+        name=name,
+        type=site_type,
+        base_url=base_url,
+        enable=enable_raw,
+        max_page=max_page,
+    )
 
 
 def resolve_sources(
     config: dict[str, Any],
     url_override: str | None,
     max_pages_override: int | None,
-) -> tuple[list[CrawlSite], int]:
-    """Resolve crawl sources + max_page from config/CLI args."""
-    max_page = _parse_positive_int(
-        max_pages_override if max_pages_override is not None else config.get("max_page"),
-        field="max_page",
-        default=DEFAULT_MAX_PAGE,
-    )
+) -> tuple[list[CrawlSite], int | None]:
+    """Resolve crawl sources and optional global max_page override from CLI."""
+    max_page_override = None
+    if max_pages_override is not None:
+        max_page_override = _parse_positive_int(max_pages_override, field="max_page")
 
     if url_override:
         return [
@@ -159,11 +170,11 @@ def resolve_sources(
                 base_url=url_override,
                 enable=True,
             )
-        ], max_page
+        ], max_page_override
 
     raw_sites = config.get("site")
     if raw_sites is None:
-        raise ValueError("No source configured. Set 'site' in config/craw_list.json or pass --url")
+        raise ValueError("No source configured. Set 'site' in config/craw_list.yaml or pass --url")
     if not isinstance(raw_sites, list):
         raise ValueError("'site' must be an array")
 
@@ -173,7 +184,7 @@ def resolve_sources(
     if not enabled_sites:
         raise ValueError("No enabled source. Set at least one site[].enable=true")
 
-    return enabled_sites, max_page
+    return enabled_sites, max_page_override
 
 
 def _absolutize_url(url: str, base_url: str = "") -> str:
@@ -409,7 +420,7 @@ async def crawl_and_index(
     sites: list[CrawlSite],
     output_dir: str = "./data",
     model_name: str = DEFAULT_EMBEDDING_MODEL,
-    max_pages: int = DEFAULT_MAX_PAGE,
+    max_pages: int | None = None,
     chunk_max_tokens: int = DEFAULT_CHUNK_MAX_TOKENS,
     embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
     embed_max_seq_length: int = DEFAULT_EMBED_MAX_SEQ_LENGTH,
@@ -452,6 +463,7 @@ async def crawl_and_index(
         for site in sites:
             site_raw_dir = raw_html_root / site.name
             site_pages: list[dict[str, Any]]
+            site_max_pages = max_pages if max_pages is not None else (site.max_page or DEFAULT_MAX_PAGE)
 
             if not rebuild:
                 if has_local_site_cache(site_raw_dir):
@@ -461,13 +473,31 @@ async def crawl_and_index(
                         print(f"  Loaded {len(site_pages)} HTML files from {site_raw_dir}")
                     else:
                         print(f"  [WARN] Cache exists but failed to load for '{site.name}', recrawling...")
-                        site_pages = await _crawl_site(site=site, output_dir=site_raw_dir, max_pages=max_pages)
+                        site_pages = await _crawl_site(
+                            site=site,
+                            output_dir=site_raw_dir,
+                            max_pages=site_max_pages,
+                        )
                 else:
-                    print(f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url}...")
-                    site_pages = await _crawl_site(site=site, output_dir=site_raw_dir, max_pages=max_pages)
+                    print(
+                        f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url} "
+                        f"(max_pages={site_max_pages})..."
+                    )
+                    site_pages = await _crawl_site(
+                        site=site,
+                        output_dir=site_raw_dir,
+                        max_pages=site_max_pages,
+                    )
             else:
-                print(f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url}...")
-                site_pages = await _crawl_site(site=site, output_dir=site_raw_dir, max_pages=max_pages)
+                print(
+                    f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url} "
+                    f"(max_pages={site_max_pages})..."
+                )
+                site_pages = await _crawl_site(
+                    site=site,
+                    output_dir=site_raw_dir,
+                    max_pages=site_max_pages,
+                )
 
             if not site_pages:
                 print(f"  [WARN] Crawling produced no pages for site '{site.name}', skipping.")
@@ -567,7 +597,7 @@ def main():
         "--config",
         type=str,
         default=None,
-        help="Path to source registry JSON (default: config/craw_list.json)",
+        help="Path to source registry YAML (default: config/craw_list.yaml)",
     )
     parser.add_argument(
         "--url",
@@ -591,7 +621,7 @@ def main():
         "--max-pages",
         type=int,
         default=None,
-        help="Max pages to crawl for each enabled site (overrides config.max_page)",
+        help="Global max pages override for all sites (overrides site.max_page and pipeline default).",
     )
     parser.add_argument(
         "--chunk-max-tokens",
@@ -616,7 +646,7 @@ def main():
 
     try:
         config = load_config(args.config)
-        sites, max_pages = resolve_sources(
+        sites, max_pages_override = resolve_sources(
             config=config,
             url_override=args.url,
             max_pages_override=args.max_pages,
@@ -646,7 +676,7 @@ def main():
             sites=sites,
             output_dir=args.output,
             model_name=model_name,
-            max_pages=max_pages,
+            max_pages=max_pages_override,
             chunk_max_tokens=chunk_max_tokens,
             embed_batch_size=embed_batch_size,
             embed_max_seq_length=embed_max_seq_length,

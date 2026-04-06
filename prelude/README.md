@@ -145,7 +145,8 @@ prelude/
 │   ├── chunkers/                   # Semantic chunking
 │   └── embedders/                  # Embedding + vectorstore
 ├── config/
-│   └── craw_list.json              # Crawl source list/config
+│   ├── craw_list.yaml              # Crawl source registry
+│   └── rag_pipeline.yaml           # RAG pipeline defaults
 ├── data/                           # Pipeline artifacts and vectorstore
 ├── scripts/
 │   └── build_index.py             # Index building script

@@ -1,8 +1,8 @@
 # Global defaults for RAG pipeline runtime.
-# Source registry (site list) remains in config/craw_list.json.
+# Source registry (site list) remains in config/craw_list.yaml.
 
 crawl:
-  # Fallback max pages per enabled site when craw_list.json does not define max_page.
+  # Fallback max pages per enabled site when site.max_page is not set.
   default_max_page: 50
 
 chunking:
