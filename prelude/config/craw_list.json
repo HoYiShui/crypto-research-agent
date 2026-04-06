@@ -6,6 +6,24 @@
       "type": "gitbook",
       "base_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/",
       "enable": true
+    },
+    {
+      "name": "lighter",
+      "type": "gitbook",
+      "base_url": "https://docs.lighter.xyz/",
+      "enable": true
+    },
+    {
+      "name": "backpack",
+      "type": "gitbook",
+      "base_url": "https://support.backpack.exchange/technical-docs",
+      "enable": true
+    },
+    {
+      "name": "variational",
+      "type": "gitbook",
+      "base_url": "https://docs.variational.io/",
+      "enable": true
     }
   ]
 }
