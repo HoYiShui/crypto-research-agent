@@ -62,6 +62,7 @@ python scripts/build_index.py --rebuild
 ```
 
 > **提示**：高级/恢复模式请查看 `scripts/build_index.py` 顶部注释，或运行 `python scripts/build_index.py --help`。
+> 抓取源字段说明见 `config/README.md`。
 
 ### 4. 启动 Agent
 

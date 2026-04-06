@@ -1,3 +1,11 @@
 {
-  "base_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/",
+  "max_page": 50,
+  "site": [
+    {
+      "name": "hyperliquid",
+      "type": "gitbook",
+      "base_url": "https://hyperliquid.gitbook.io/hyperliquid-docs/",
+      "enable": true
+    }
+  ]
 }

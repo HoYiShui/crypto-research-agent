@@ -62,6 +62,7 @@ python scripts/build_index.py --rebuild
 ```
 
 > **Note**: For advanced or recovery workflows, see the top docstring in `scripts/build_index.py` (or run `python scripts/build_index.py --help`).
+> Source registry schema is documented in `config/README.md`.
 
 ### 4. Start Agent
 
