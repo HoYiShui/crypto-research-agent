@@ -26,7 +26,7 @@ RuntimeError: Invalid buffer size: 62.38 GiB
 这是由长序列注意力开销（long-sequence attention cost）与批处理编码（batch encoding）共同触发的内存压力问题。实际表现为：部分 chunk 过大，导致 `bge-m3` 在当前机器设置下无法稳定完成编码。
 
 面向初学者的内存估算与推导说明见：
-`docs/research/bge-m3-attention-memory-estimation.md`
+`prelude/docs/research/bge-m3-attention-memory-estimation.md`
 
 ### 立即观察（Immediate notes）
 

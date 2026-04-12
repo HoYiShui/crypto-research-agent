@@ -6,6 +6,13 @@
 
 Crypto research agent 系列的第一篇。用极简技术栈验证核心的 RAG + Agent 能力。
 
+## 文档导航
+
+- 本层文档索引：`prelude/docs/README.md`
+- RAG 工作流：`prelude/docs/rag/rag_workflow.md`
+- 事故记录：`prelude/docs/research/rag-pipeline-incident-log.md`
+- 执行计划：`prelude/docs/exec-plans/`
+
 ## 架构
 
 ```

@@ -6,6 +6,13 @@
 
 Initial milestone in the Crypto Research Agent series, focused on validating core RAG and minimal agent capabilities.
 
+## Documentation
+
+- Local docs index: `prelude/docs/README.md`
+- RAG workflow: `prelude/docs/rag/rag_workflow.md`
+- Incident log: `prelude/docs/research/rag-pipeline-incident-log.md`
+- Execution plans: `prelude/docs/exec-plans/`
+
 ## Architecture
 
 ```
