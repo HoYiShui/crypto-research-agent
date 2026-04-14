@@ -7,7 +7,6 @@ Usage:
 """
 import argparse
 import os
-import json
 from pathlib import Path
 from dotenv import load_dotenv
 import sys
@@ -17,33 +16,17 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agent.agent_loop import create_agent
-from embedders.embedding_pipeline import create_embedding_pipeline
+from app.agent.agent_loop import create_agent
+from rag.embedders.embedding_pipeline import create_embedding_pipeline
+from rag.pipeline_config import get_embedding_config
 
-
-def load_crawl_config() -> dict:
-    config_path = Path(__file__).parent / ".crawl_config.json"
-    if not config_path.exists():
-        return {}
-    try:
-        return json.loads(config_path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def resolve_embedding_model(config: dict) -> str:
-    return (
-        os.getenv("EMBEDDING_MODEL")
-        or config.get("model")
-        or "BAAI/bge-m3"
-    )
-
+DEFAULT_EMBEDDING_MODEL = str(get_embedding_config().get("model", "BAAI/bge-m3"))
 
 def load_vectorstore(persist_dir: str = None, model_name: str = None):
     """Load existing vectorstore"""
     if not persist_dir:
         persist_dir = os.getenv("VECTORSTORE_DIR", "./data/vectorstore")
-    pipeline = create_embedding_pipeline(model_name=model_name or "BAAI/bge-m3", persist_dir=persist_dir)
+    pipeline = create_embedding_pipeline(model_name=model_name or DEFAULT_EMBEDDING_MODEL, persist_dir=persist_dir)
     return pipeline
 
 
@@ -107,8 +90,7 @@ def main():
     # Load vectorstore
     print("Loading vectorstore...")
     try:
-        crawl_config = load_crawl_config()
-        embedding_model = resolve_embedding_model(crawl_config)
+        embedding_model = os.getenv("EMBEDDING_MODEL") or DEFAULT_EMBEDDING_MODEL
         vectorstore_dir = args.vectorstore or os.getenv("VECTORSTORE_DIR", "./data/vectorstore")
         vectorstore = load_vectorstore(vectorstore_dir, model_name=embedding_model)
         print(f"[OK] Vectorstore loaded: {vectorstore_dir} (model={embedding_model})")

@@ -63,7 +63,7 @@ const userMarkdownTheme: MarkdownTheme = {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..", "..");
-const bridgeScript = path.join(projectRoot, "bridge", "pi_bridge.py");
+const bridgeScript = path.join(projectRoot, "app", "bridge", "pi_bridge.py");
 
 function findPython(): string {
   const venvPython = path.join(projectRoot, ".venv", "bin", "python");

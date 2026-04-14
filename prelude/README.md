@@ -6,6 +6,13 @@
 
 Initial milestone in the Crypto Research Agent series, focused on validating core RAG and minimal agent capabilities.
 
+## Documentation
+
+- Local docs index: `prelude/docs/README.md`
+- RAG workflow: `prelude/docs/rag/rag_workflow.md`
+- Incident log: `prelude/docs/research/rag-pipeline-incident-log.md`
+- Execution plans: `prelude/docs/exec-plans/`
+
 ## Architecture
 
 ```
@@ -57,26 +64,12 @@ vim .env
 ### 3. Build Index
 
 ```bash
-# Use default config from .crawl_config.json
-python scripts/build_index.py
-
-# Override URL
-python scripts/build_index.py --url https://dydx.exchange/blog/
-
-# Use custom config file
-python scripts/build_index.py --config /path/to/config.json
-
-# Specify embedding model
-python scripts/build_index.py --model BAAI/bge-m3
-
-# Rebuild embeddings/chunks from existing HTML (recommended after parser/chunker changes)
-python scripts/build_index.py --skip-crawl --rebuild
-
-# Full recrawl + rebuild (when docs may have changed)
+# Recommended: rebuild index end-to-end from your configured source
 python scripts/build_index.py --rebuild
 ```
 
-> **Note**: Recent bug fixes did not introduce new CLI parameters for `build_index.py`.
+> **Note**: For advanced or recovery workflows, see the top docstring in `scripts/build_index.py` (or run `python scripts/build_index.py --help`).
+> Source registry schema is documented in `config/README.md`.
 
 ### 4. Start Agent
 
@@ -108,7 +101,7 @@ MODEL=MiniMax-M2.7
 VECTORSTORE_DIR=./data/vectorstore
 
 # Optional: runtime embedding model override
-# Priority: EMBEDDING_MODEL > .crawl_config.json:model > BAAI/bge-m3
+# Default runtime embedding model is BAAI/bge-m3
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # Optional: retry cooldown (seconds) after lazy vectorstore init failure
@@ -117,7 +110,7 @@ VECTORSTORE_RETRY_INTERVAL_SEC=30
 
 ## Troubleshooting RAG_UNAVAILABLE
 
-- Verify model priority first: `EMBEDDING_MODEL` in `.env` overrides `.crawl_config.json`.
+- Verify model setting first: `EMBEDDING_MODEL` in `.env` overrides the runtime default (`BAAI/bge-m3`).
 - Keep index/runtime embedding models consistent to avoid vector dimension mismatch.
 - For cached models, runtime now prefers local HF snapshot and does not require network.
 
@@ -150,23 +143,22 @@ prelude/
 │   ├── src/index.ts                # Chat interface, spawns bridge as subprocess
 │   ├── package.json                # pnpm, depends on @mariozechner/pi-tui
 │   └── tsconfig.json
+├── app/                            # Runtime app layer
+│   ├── agent/                      # Minimal agent loop + tools
+│   └── bridge/                     # JSONL bridge (spawned by TUI)
+├── rag/                            # RAG pipeline layer
+│   ├── crawlers/                   # Crawl HTML
+│   ├── parsers/                    # HTML/Markdown parsing
+│   ├── chunkers/                   # Semantic chunking
+│   └── embedders/                  # Embedding + vectorstore
+├── config/
+│   ├── craw_list.yaml              # Crawl source registry
+│   └── rag_pipeline.yaml           # RAG pipeline defaults
+├── data/                           # Pipeline artifacts and vectorstore
 ├── scripts/
-│   └── build_index.py             # Index building script
-├── crawlers/
-│   └── gitbook_crawler.py         # Playwright crawler
-├── parsers/
-│   ├── html_to_markdown.py        # HTML -> Markdown
-│   └── markdown_parser.py         # Markdown -> MarkdownBlock
-├── chunkers/
-│   └── semantic_chunker.py        # MarkdownBlock -> Document
-├── embedders/
-│   └── embedding_pipeline.py      # Document -> Chroma
-├── agent/
-│   ├── agent_loop.py              # Minimal Agent Loop (~500 lines)
-│   ├── tools.py                   # Tool definitions + handlers
-│   └── system_prompt.py           # System prompt
-├── bridge/
-│   └── pi_bridge.py               # JSONL bridge (spawned by TUI)
+│   ├── build_index.py              # Index building script
+│   ├── analyze_chunks.py           # Generic chunk token distribution analysis
+│   └── investigate_chunk_outliers.py # OOM-oriented chunk outlier investigation
 ├── main.py                        # CLI fallback (no TUI)
 ├── pyproject.toml
 ├── uv.lock

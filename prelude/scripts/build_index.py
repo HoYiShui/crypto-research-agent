@@ -1,46 +1,205 @@
 """
 build_index.py: Build RAG index entry point
 
-Usage:
-    python scripts/build_index.py                    # Use .crawl_config.json
-    python scripts/build_index.py --url <url>       # Override URL
-    python scripts/build_index.py --config <path>  # Use custom config
-    python scripts/build_index.py --rebuild         # Force full rebuild
-    python scripts/build_index.py --skip-crawl      # Skip crawl (use existing HTML)
+Pipeline stages:
+    1) crawl   -> raw_html/<site_name>/*.html
+    2) parse   -> parsed_blocks.jsonl
+    3) chunk   -> chunks.jsonl
+    4) embed   -> vectorstore (embedding + storage)
+
+Recommended usage:
+    python scripts/build_index.py --rebuild
+
+Selected usage examples:
+    python scripts/build_index.py
+    python scripts/build_index.py --from-stage parse --rebuild
+    python scripts/build_index.py --from-stage chunk --rebuild
+    python scripts/build_index.py --url https://dydx.exchange/blog/
+
+Config schema (config/craw_list.yaml):
+site:
+  - name: hyperliquid
+    type: gitbook
+    base_url: https://hyperliquid.gitbook.io/hyperliquid-docs/
+    enable: true
+    # optional per-site override
+    # max_page: 80
 """
-import asyncio
+
+from __future__ import annotations
+
 import argparse
+import asyncio
 import json
-import os
-from pathlib import Path
-from dotenv import load_dotenv
+import re
+import shutil
 import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin, urlparse
+
+from dotenv import load_dotenv
+import yaml
 
 load_dotenv()
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+from rag.pipeline_config import load_pipeline_config
 
-DEFAULT_CONFIG_PATH = project_root / ".crawl_config.json"
+STAGES = ("crawl", "parse", "chunk", "embed")
+DEFAULT_CONFIG_PATH = project_root / "config" / "craw_list.yaml"
+PIPELINE_CONFIG = load_pipeline_config()
+DEFAULT_EMBEDDING_MODEL = str(PIPELINE_CONFIG.get("embedding", {}).get("model", "BAAI/bge-m3"))
+DEFAULT_EMBED_BATCH_SIZE = int(PIPELINE_CONFIG.get("embedding", {}).get("batch_size", 4))
+DEFAULT_EMBED_MAX_SEQ_LENGTH = int(PIPELINE_CONFIG.get("embedding", {}).get("max_seq_length", 1024))
+DEFAULT_CHUNK_MAX_TOKENS = int(PIPELINE_CONFIG.get("chunking", {}).get("max_tokens_per_chunk", 1024))
+DEFAULT_MAX_PAGE = int(PIPELINE_CONFIG.get("crawl", {}).get("default_max_page", 50))
+SUPPORTED_SITE_TYPES = {"gitbook"}
 
 
-def load_config(config_path: str = None) -> dict:
-    """Load crawl config from JSON file"""
+@dataclass(frozen=True)
+class CrawlSite:
+    name: str
+    type: str
+    base_url: str
+    enable: bool = True
+    max_page: int | None = None
+
+
+@dataclass
+class CachedDocument:
+    """Lightweight cached document format for chunk artifacts."""
+
+    page_content: str
+    metadata: dict[str, Any]
+
+
+def stage_index(stage: str) -> int:
+    return STAGES.index(stage)
+
+
+def load_config(config_path: str | None = None) -> dict[str, Any]:
+    """Load crawl source registry from YAML file."""
     path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
     if path.exists():
-        with open(path) as f:
-            return json.load(f)
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ValueError(f"Config parse failed for {path}: {exc}") from exc
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise ValueError(f"Config must be a YAML mapping object: {path}")
+        return data
     return {}
 
 
 def url_to_slug(base_url: str) -> str:
-    """Convert URL to a safe directory slug"""
-    from urllib.parse import urlparse
+    """Convert URL to a safe directory slug."""
     parsed = urlparse(base_url)
     slug = parsed.netloc + parsed.path
     slug = slug.strip("/").replace("/", "_")
-    import re
-    return re.sub(r'[^\w\-_]', "_", slug)
+    return re.sub(r"[^\w\-_]", "_", slug)
+
+
+def _parse_positive_int(value: Any, field: str, default: int | None = None) -> int:
+    if value is None:
+        if default is None:
+            raise ValueError(f"'{field}' is required")
+        return default
+
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"'{field}' must be a positive integer")
+
+    return value
+
+
+def _parse_non_empty_str(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"'{field}' must be a non-empty string")
+    return value.strip()
+
+
+def _parse_site(item: Any, index: int) -> CrawlSite:
+    if not isinstance(item, dict):
+        raise ValueError(f"site[{index}] must be an object")
+
+    name = _parse_non_empty_str(item.get("name"), f"site[{index}].name")
+    site_type = _parse_non_empty_str(item.get("type"), f"site[{index}].type").lower()
+    base_url = _parse_non_empty_str(item.get("base_url"), f"site[{index}].base_url")
+
+    if site_type not in SUPPORTED_SITE_TYPES:
+        supported = ", ".join(sorted(SUPPORTED_SITE_TYPES))
+        raise ValueError(f"site[{index}].type '{site_type}' is unsupported (supported: {supported})")
+
+    enable_raw = item.get("enable", True)
+    if not isinstance(enable_raw, bool):
+        raise ValueError(f"site[{index}].enable must be boolean")
+
+    max_page_raw = item.get("max_page")
+    max_page = None
+    if max_page_raw is not None:
+        max_page = _parse_positive_int(max_page_raw, field=f"site[{index}].max_page")
+
+    return CrawlSite(
+        name=name,
+        type=site_type,
+        base_url=base_url,
+        enable=enable_raw,
+        max_page=max_page,
+    )
+
+
+def resolve_sources(
+    config: dict[str, Any],
+    url_override: str | None,
+    max_pages_override: int | None,
+) -> tuple[list[CrawlSite], int | None]:
+    """Resolve crawl sources and optional global max_page override from CLI."""
+    max_page_override = None
+    if max_pages_override is not None:
+        max_page_override = _parse_positive_int(max_pages_override, field="max_page")
+
+    if url_override:
+        return [
+            CrawlSite(
+                name=url_to_slug(url_override) or "manual_site",
+                type="gitbook",
+                base_url=url_override,
+                enable=True,
+            )
+        ], max_page_override
+
+    raw_sites = config.get("site")
+    if raw_sites is None:
+        raise ValueError("No source configured. Set 'site' in config/craw_list.yaml or pass --url")
+    if not isinstance(raw_sites, list):
+        raise ValueError("'site' must be an array")
+
+    parsed_sites = [_parse_site(item, index=i) for i, item in enumerate(raw_sites)]
+    enabled_sites = [site for site in parsed_sites if site.enable]
+
+    if not enabled_sites:
+        raise ValueError("No enabled source. Set at least one site[].enable=true")
+
+    return enabled_sites, max_page_override
+
+
+def _absolutize_url(url: str, base_url: str = "") -> str:
+    """Return absolute URL when possible."""
+    if not url:
+        return ""
+
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        return url
+
+    if base_url:
+        return urljoin(base_url, url)
+
+    return url
 
 
 def _extract_source_url_from_html(html: str, fallback_url: str = "") -> str:
@@ -52,153 +211,383 @@ def _extract_source_url_from_html(html: str, fallback_url: str = "") -> str:
 
     try:
         soup = BeautifulSoup(html, "html.parser")
+
         canonical = soup.find("link", attrs={"rel": "canonical"})
         if canonical and canonical.get("href"):
-            return canonical["href"].strip()
+            return _absolutize_url(canonical["href"].strip(), base_url=fallback_url)
+
         og_url = soup.find("meta", attrs={"property": "og:url"})
         if og_url and og_url.get("content"):
-            return og_url["content"].strip()
+            return _absolutize_url(og_url["content"].strip(), base_url=fallback_url)
     except Exception:
         pass
 
     return fallback_url
 
 
-def load_existing_html(raw_html_dir: Path, base_url: str = "") -> list[dict]:
-    """Load pages from existing HTML files on disk"""
+def load_existing_html(raw_html_dir: Path, base_url: str = "") -> list[dict[str, Any]]:
+    """Load pages from existing HTML files on disk."""
     if not raw_html_dir.exists():
         return []
 
-    pages = []
-    for html_file in raw_html_dir.glob("*.html"):
+    pages: list[dict[str, Any]] = []
+    html_files = sorted(raw_html_dir.glob("*.html"))
+
+    for html_file in html_files:
         content = html_file.read_text(encoding="utf-8")
-        # Extract title from filename (URL slug -> readable)
+
+        # URL slug filename -> readable path
         title = html_file.stem.replace("_", "/").replace("+", " ")
+
         if title == "index":
             fallback_url = base_url or title
         elif base_url:
             fallback_url = f"{base_url.rstrip('/')}/{title.lstrip('/')}"
         else:
             fallback_url = title
+
         source_url = _extract_source_url_from_html(content, fallback_url=fallback_url)
-        pages.append({
-            "url": source_url,
-            "title": title,
-            "html": content,
-            "filename": html_file.name,
-        })
+        source_url = _absolutize_url(source_url, base_url=base_url)
+
+        pages.append(
+            {
+                "url": source_url,
+                "title": title,
+                "html": content,
+                "filename": html_file.name,
+            }
+        )
+
     return pages
 
 
 def vectorstore_has_data(persist_dir: str) -> bool:
-    """Check if vectorstore already has documents (no model loading needed)"""
+    """Check if vectorstore already has documents (no model loading needed)."""
     persist_path = Path(persist_dir)
     if not persist_path.exists():
         return False
-    # Chroma stores a file called "chroma.sqlite3" or has a "index.bin"
-    has_data = (persist_path / "chroma.sqlite3").exists() or any(persist_path.glob("**/*.bin"))
-    return has_data
+    return (persist_path / "chroma.sqlite3").exists() or any(persist_path.glob("**/*.bin"))
+
+
+def _serialize_block_item(item: Any) -> Any:
+    from rag.parsers.markdown_parser import MarkdownBlock
+
+    if isinstance(item, MarkdownBlock):
+        return {"__markdown_block__": _serialize_block(item)}
+    return item
+
+
+def _deserialize_block_item(item: Any) -> Any:
+    if isinstance(item, dict) and "__markdown_block__" in item:
+        return _deserialize_block(item["__markdown_block__"])
+    return item
+
+
+def _serialize_block(block: Any) -> dict[str, Any]:
+    return {
+        "block_id": block.block_id,
+        "heading_path": block.heading_path,
+        "heading_level": block.heading_level,
+        "block_type": block.block_type,
+        "content": block.content,
+        "items": [_serialize_block_item(i) for i in (block.items or [])],
+        "table_headers": block.table_headers,
+        "table_rows": block.table_rows,
+        "code": block.code,
+        "code_lang": block.code_lang,
+        "source_url": block.source_url,
+        "raw_markdown": block.raw_markdown,
+    }
+
+
+def _deserialize_block(data: dict[str, Any]):
+    from rag.parsers.markdown_parser import MarkdownBlock
+
+    return MarkdownBlock(
+        block_id=data.get("block_id", ""),
+        heading_path=data.get("heading_path") or [],
+        heading_level=data.get("heading_level", 1),
+        block_type=data.get("block_type", "text"),
+        content=data.get("content"),
+        items=[_deserialize_block_item(i) for i in (data.get("items") or [])],
+        table_headers=data.get("table_headers"),
+        table_rows=data.get("table_rows"),
+        code=data.get("code"),
+        code_lang=data.get("code_lang"),
+        source_url=data.get("source_url"),
+        raw_markdown=data.get("raw_markdown"),
+    )
+
+
+def save_blocks(blocks: list[Any], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        for block in blocks:
+            f.write(json.dumps(_serialize_block(block), ensure_ascii=False) + "\n")
+
+
+def load_blocks(in_path: Path) -> list[Any]:
+    if not in_path.exists():
+        raise FileNotFoundError(f"Parsed blocks cache not found: {in_path}")
+
+    blocks = []
+    with in_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            blocks.append(_deserialize_block(json.loads(line)))
+    return blocks
+
+
+def save_documents(documents: list[Any], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        for doc in documents:
+            payload = {
+                "page_content": doc.page_content,
+                "metadata": doc.metadata,
+            }
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def load_documents(in_path: Path) -> list[CachedDocument]:
+    if not in_path.exists():
+        raise FileNotFoundError(f"Chunk cache not found: {in_path}")
+
+    docs: list[CachedDocument] = []
+    with in_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            payload = json.loads(line)
+            docs.append(
+                CachedDocument(
+                    page_content=payload.get("page_content", ""),
+                    metadata=payload.get("metadata", {}),
+                )
+            )
+    return docs
+
+
+def resolve_start_stage(from_stage: str | None) -> str:
+    """Resolve stage to start from, defaults to crawl."""
+    return from_stage or "crawl"
+
+
+def cleanup_for_rebuild(
+    start_stage: str,
+    raw_html_root: Path,
+    sites: list[CrawlSite],
+    parsed_blocks_path: Path,
+    chunks_path: Path,
+    vectorstore_dir: Path,
+) -> None:
+    """Delete artifacts from start_stage onward."""
+    if stage_index(start_stage) <= stage_index("crawl") and raw_html_root.exists():
+        for site in sites:
+            site_raw_dir = raw_html_root / site.name
+            if site_raw_dir.exists():
+                shutil.rmtree(site_raw_dir)
+
+    if stage_index(start_stage) <= stage_index("parse") and parsed_blocks_path.exists():
+        parsed_blocks_path.unlink()
+
+    if stage_index(start_stage) <= stage_index("chunk") and chunks_path.exists():
+        chunks_path.unlink()
+
+    if stage_index(start_stage) <= stage_index("embed") and vectorstore_dir.exists():
+        shutil.rmtree(vectorstore_dir)
+
+
+def has_local_site_cache(site_raw_dir: Path) -> bool:
+    """Quick check whether local raw HTML cache exists for a site."""
+    return site_raw_dir.exists() and any(site_raw_dir.glob("*.html"))
+
+
+async def _crawl_site(site: CrawlSite, output_dir: Path, max_pages: int) -> list[dict[str, Any]]:
+    from rag.crawlers.gitbook_crawler import GitBookCrawler
+
+    if site.type == "gitbook":
+        crawler = GitBookCrawler(base_url=site.base_url, output_dir=str(output_dir))
+        return await crawler.crawl(max_pages=max_pages)
+
+    raise ValueError(f"Unsupported site type: {site.type}")
 
 
 async def crawl_and_index(
-    base_url: str,
+    sites: list[CrawlSite],
     output_dir: str = "./data",
-    model_name: str = "BAAI/bge-m3",
-    max_pages: int = 50,
-    skip_crawl: bool = False,
+    model_name: str = DEFAULT_EMBEDDING_MODEL,
+    max_pages: int | None = None,
+    chunk_max_tokens: int = DEFAULT_CHUNK_MAX_TOKENS,
+    embed_batch_size: int = DEFAULT_EMBED_BATCH_SIZE,
+    embed_max_seq_length: int = DEFAULT_EMBED_MAX_SEQ_LENGTH,
     rebuild: bool = False,
+    from_stage: str | None = None,
 ):
-    """Crawl docs and build index"""
-    from crawlers.gitbook_crawler import GitBookCrawler
-    from parsers.html_to_markdown import HTMLToMarkdownConverter
-    from parsers.markdown_parser import MarkdownParser
-    from chunkers.semantic_chunker import blocks_to_documents
-    from embedders.embedding_pipeline import create_embedding_pipeline
+    """Build index pipeline with resumable stages."""
+    from rag.chunkers.semantic_chunker import blocks_to_documents
+    from rag.embedders.embedding_pipeline import create_embedding_pipeline
+    from rag.parsers.html_to_markdown import HTMLToMarkdownConverter
+    from rag.parsers.markdown_parser import MarkdownParser
 
-    raw_html_dir = Path(output_dir) / "raw_html"
-    vectorstore_dir = Path(output_dir) / "vectorstore"
+    start_stage = resolve_start_stage(from_stage=from_stage)
 
-    # ── Step 1: Crawl (or load from disk) ──────────────────────────────────────
-    pages = []
+    output_root = Path(output_dir)
+    raw_html_root = output_root / "raw_html"
+    parsed_blocks_path = output_root / "parsed_blocks.jsonl"
+    chunks_path = output_root / "chunks.jsonl"
+    vectorstore_dir = output_root / "vectorstore"
 
-    if rebuild and not skip_crawl:
-        # Full recrawl + rebuild
-        print("\n[Step 1/4] Rebuild mode: crawling fresh...")
-        if raw_html_dir.exists():
-            import shutil
-            shutil.rmtree(raw_html_dir)
-        crawler = GitBookCrawler(
-            base_url=base_url,
-            output_dir=str(raw_html_dir)
+    print(f"Pipeline start stage: {start_stage}")
+    print(f"Enabled sites: {', '.join(site.name for site in sites)}")
+
+    if rebuild:
+        print("Rebuild mode: clearing artifacts from start stage onward...")
+        cleanup_for_rebuild(
+            start_stage=start_stage,
+            raw_html_root=raw_html_root,
+            sites=sites,
+            parsed_blocks_path=parsed_blocks_path,
+            chunks_path=chunks_path,
+            vectorstore_dir=vectorstore_dir,
         )
-        pages = await crawler.crawl(max_pages=max_pages)
-    elif skip_crawl:
-        # Reuse existing HTML (works for both rebuild/non-rebuild)
-        pages = load_existing_html(raw_html_dir, base_url=base_url)
-        if not pages:
-            print("Error: --skip-crawl specified but no HTML files found. Run without --skip-crawl first.")
-            sys.exit(1)
-        mode = "rebuild mode: loaded" if rebuild else "loaded"
-        print(f"\n[Step 1/4] {mode} {len(pages)} HTML files from disk")
+
+    # Step 1/4: Crawl or load HTML
+    pages: list[dict[str, Any]] = []
+    failed_sites: list[str] = []
+
+    if stage_index(start_stage) <= stage_index("crawl"):
+        for site in sites:
+            site_raw_dir = raw_html_root / site.name
+            site_pages: list[dict[str, Any]]
+            site_max_pages = max_pages if max_pages is not None else (site.max_page or DEFAULT_MAX_PAGE)
+
+            if not rebuild:
+                if has_local_site_cache(site_raw_dir):
+                    print(f"\n[Step 1/4] Found local cache for '{site.name}', skipping crawl")
+                    site_pages = load_existing_html(site_raw_dir, base_url=site.base_url)
+                    if site_pages:
+                        print(f"  Loaded {len(site_pages)} HTML files from {site_raw_dir}")
+                    else:
+                        print(f"  [WARN] Cache exists but failed to load for '{site.name}', recrawling...")
+                        site_pages = await _crawl_site(
+                            site=site,
+                            output_dir=site_raw_dir,
+                            max_pages=site_max_pages,
+                        )
+                else:
+                    print(
+                        f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url} "
+                        f"(max_pages={site_max_pages})..."
+                    )
+                    site_pages = await _crawl_site(
+                        site=site,
+                        output_dir=site_raw_dir,
+                        max_pages=site_max_pages,
+                    )
+            else:
+                print(
+                    f"\n[Step 1/4] Crawling '{site.name}' from {site.base_url} "
+                    f"(max_pages={site_max_pages})..."
+                )
+                site_pages = await _crawl_site(
+                    site=site,
+                    output_dir=site_raw_dir,
+                    max_pages=site_max_pages,
+                )
+
+            if not site_pages:
+                print(f"  [WARN] Crawling produced no pages for site '{site.name}', skipping.")
+                failed_sites.append(site.name)
+                continue
+
+            for page in site_pages:
+                page["site_name"] = site.name
+                page["site_base_url"] = site.base_url
+            pages.extend(site_pages)
     else:
-        # Default behavior: reuse existing HTML when available, otherwise crawl
-        existing = load_existing_html(raw_html_dir, base_url=base_url)
-        if existing:
-            print(f"\n[Step 1/4] Loading {len(existing)} existing HTML files from disk (skip crawl)")
-            pages = existing
-        else:
-            print(f"\n[Step 1/4] Crawling from {base_url}...")
-            crawler = GitBookCrawler(
-                base_url=base_url,
-                output_dir=str(raw_html_dir)
-            )
-            pages = await crawler.crawl(max_pages=max_pages)
+        for site in sites:
+            site_raw_dir = raw_html_root / site.name
+            site_pages = load_existing_html(site_raw_dir, base_url=site.base_url)
+            if not site_pages:
+                print(f"  [WARN] No raw HTML cache for '{site.name}' in {site_raw_dir}, skipping.")
+                failed_sites.append(site.name)
+                continue
+            for page in site_pages:
+                page["site_name"] = site.name
+                page["site_base_url"] = site.base_url
+            pages.extend(site_pages)
+
+        print(f"\n[Step 1/4] Loaded {len(pages)} HTML files from disk")
+
+    if failed_sites:
+        print(f"[WARN] Step 1 skipped failed sites: {', '.join(failed_sites)}")
+
+    if not pages:
+        print("Error: no pages available after Step 1. Use --rebuild, --url, or fix site availability.")
+        sys.exit(1)
 
     print(f"Crawl/Load complete: {len(pages)} pages")
 
-    # ── Step 2: Parse ─────────────────────────────────────────────────────────
-    print("\n[Step 2/4] Parsing...")
-    converter = HTMLToMarkdownConverter()
-    parser = MarkdownParser()
+    # Step 2/4: Parse or load parsed blocks
+    if stage_index(start_stage) <= stage_index("parse"):
+        print("\n[Step 2/4] Parsing...")
+        converter = HTMLToMarkdownConverter()
+        parser = MarkdownParser()
 
-    all_blocks = []
-    for page in pages:
-        markdown_text = converter.convert(page["html"], base_url=page["url"])
-        blocks = parser.parse(markdown_text)
+        all_blocks = []
+        for page in pages:
+            markdown_text = converter.convert(page["html"], base_url=page["url"])
+            blocks = parser.parse(markdown_text)
 
-        for block in blocks:
-            block.source_url = page["url"]
+            for block in blocks:
+                block.source_url = _absolutize_url(page["url"], base_url=page.get("site_base_url", ""))
 
-        all_blocks.extend(blocks)
-        print(f"  {page['title'][:50]}: {len(blocks)} blocks")
+            all_blocks.extend(blocks)
+            site_name = page.get("site_name", "unknown")
+            print(f"  [{site_name}] {page['title'][:50]}: {len(blocks)} blocks")
 
-    print(f"Parse complete: {len(all_blocks)} blocks total")
+        save_blocks(all_blocks, parsed_blocks_path)
+        print(f"Parse complete: {len(all_blocks)} blocks total")
+        print(f"Parsed cache: {parsed_blocks_path}")
+    else:
+        print("\n[Step 2/4] Loading parsed blocks cache...")
+        all_blocks = load_blocks(parsed_blocks_path)
+        print(f"Parse cache loaded: {len(all_blocks)} blocks")
 
-    # ── Step 3: Chunk ──────────────────────────────────────────────────────────
-    print("\n[Step 3/4] Chunking...")
-    documents = blocks_to_documents(all_blocks)
-    print(f"Chunking complete: {len(documents)} chunks")
+    # Step 3/4: Chunk or load chunks
+    if stage_index(start_stage) <= stage_index("chunk"):
+        print("\n[Step 3/4] Chunking...")
+        documents = blocks_to_documents(all_blocks, max_tokens_per_chunk=chunk_max_tokens)
+        save_documents(documents, chunks_path)
+        print(f"Chunking complete: {len(documents)} chunks")
+        print(f"Chunk cache: {chunks_path}")
+    else:
+        print("\n[Step 3/4] Loading chunk cache...")
+        documents = load_documents(chunks_path)
+        print(f"Chunk cache loaded: {len(documents)} chunks")
 
-    # ── Step 4: Embed + Store ────────────────────────────────────────────────
+    # Step 4/4: Embed + Store
     if not rebuild and vectorstore_has_data(str(vectorstore_dir)):
-        print(f"\n[Step 4/4] Vectorstore already has data, skipping embed (use --rebuild to overwrite)")
+        print("\n[Step 4/4] Vectorstore already has data, skipping embed (use --rebuild to overwrite)")
     else:
         print("\n[Step 4/4] Embedding + Storing...")
-        if rebuild:
-            print("  (rebuild mode, clearing existing vectorstore)")
-            import shutil
-            if vectorstore_dir.exists():
-                shutil.rmtree(vectorstore_dir)
-
         pipeline = create_embedding_pipeline(
             model_name=model_name,
-            persist_dir=str(vectorstore_dir)
+            persist_dir=str(vectorstore_dir),
+            batch_size=embed_batch_size,
+            max_seq_length=embed_max_seq_length,
         )
         pipeline.add_documents(documents)
         print(f"Storage complete: {len(documents)} documents")
 
     print("\n[OK] Index ready!")
     print(f"   Data dir: {output_dir}")
+    print(f"   Parsed cache: {parsed_blocks_path}")
+    print(f"   Chunk cache: {chunks_path}")
     print(f"   Vectorstore: {vectorstore_dir}")
 
 
@@ -208,65 +597,93 @@ def main():
         "--config",
         type=str,
         default=None,
-        help="Path to config file (default: .crawl_config.json)"
+        help="Path to source registry YAML (default: config/craw_list.yaml)",
     )
     parser.add_argument(
         "--url",
         type=str,
         default=None,
-        help="GitBook URL to crawl (overrides config)"
+        help="Single URL override (as one enabled gitbook site)",
     )
     parser.add_argument(
         "--output",
         type=str,
         default="./data",
-        help="Output directory"
+        help="Output directory",
     )
     parser.add_argument(
         "--model",
         type=str,
         default=None,
-        help="Embedding model name (overrides config)"
+        help="Embedding model name override",
     )
     parser.add_argument(
         "--max-pages",
         type=int,
         default=None,
-        help="Max pages to crawl (overrides config)"
+        help="Global max pages override for all sites (overrides site.max_page and pipeline default).",
     )
     parser.add_argument(
-        "--skip-crawl",
-        action="store_true",
-        help="Skip crawling, use existing HTML files from previous crawl"
+        "--chunk-max-tokens",
+        type=int,
+        default=None,
+        help="Chunk token budget override (default from config/rag_pipeline.yaml)",
+    )
+    parser.add_argument(
+        "--from-stage",
+        type=str,
+        choices=STAGES,
+        default=None,
+        help="Explicitly choose pipeline start stage: crawl|parse|chunk|embed.",
     )
     parser.add_argument(
         "--rebuild",
         action="store_true",
-        help="Force full rebuild (re-crawl and re-embed)"
+        help="Delete artifacts from the chosen start stage onward, then rebuild.",
     )
 
     args = parser.parse_args()
 
-    # Load config file
-    config = load_config(args.config)
-
-    # CLI args override config file
-    base_url = args.url or config.get("base_url")
-    max_pages = args.max_pages or config.get("max_pages", 50)
-    model_name = args.model or config.get("model", "BAAI/bge-m3")
-
-    if not base_url:
-        print("Error: No URL specified. Use --url or set base_url in .crawl_config.json")
+    try:
+        config = load_config(args.config)
+        sites, max_pages_override = resolve_sources(
+            config=config,
+            url_override=args.url,
+            max_pages_override=args.max_pages,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}")
         sys.exit(1)
 
-    asyncio.run(crawl_and_index(
-        base_url=base_url,
-        output_dir=args.output,
-        model_name=model_name,
-        max_pages=max_pages,
-        skip_crawl=args.skip_crawl,
-        rebuild=args.rebuild,
-    ))
+    if args.rebuild and not args.url and len(sites) > 1:
+        print("[WARN] --rebuild without --url will recrawl all enabled sites from config.")
+
+    if args.chunk_max_tokens is not None and args.chunk_max_tokens <= 0:
+        print("Error: --chunk-max-tokens must be a positive integer")
+        sys.exit(1)
+
+    pipeline_cfg = load_pipeline_config()
+    chunk_cfg = pipeline_cfg.get("chunking", {})
+    embed_cfg = pipeline_cfg.get("embedding", {})
+
+    model_name = args.model or DEFAULT_EMBEDDING_MODEL
+    chunk_max_tokens = args.chunk_max_tokens or int(chunk_cfg.get("max_tokens_per_chunk", DEFAULT_CHUNK_MAX_TOKENS))
+    embed_batch_size = int(embed_cfg.get("batch_size", DEFAULT_EMBED_BATCH_SIZE))
+    embed_max_seq_length = int(embed_cfg.get("max_seq_length", DEFAULT_EMBED_MAX_SEQ_LENGTH))
+
+    asyncio.run(
+        crawl_and_index(
+            sites=sites,
+            output_dir=args.output,
+            model_name=model_name,
+            max_pages=max_pages_override,
+            chunk_max_tokens=chunk_max_tokens,
+            embed_batch_size=embed_batch_size,
+            embed_max_seq_length=embed_max_seq_length,
+            rebuild=args.rebuild,
+            from_stage=args.from_stage,
+        )
+    )
 
 
 if __name__ == "__main__":

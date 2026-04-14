@@ -6,6 +6,13 @@
 
 Crypto research agent 系列的第一篇。用极简技术栈验证核心的 RAG + Agent 能力。
 
+## 文档导航
+
+- 本层文档索引：`prelude/docs/README.md`
+- RAG 工作流：`prelude/docs/rag/rag_workflow.md`
+- 事故记录：`prelude/docs/research/rag-pipeline-incident-log.md`
+- 执行计划：`prelude/docs/exec-plans/`
+
 ## 架构
 
 ```
@@ -57,26 +64,12 @@ vim .env
 ### 3. 构建索引
 
 ```bash
-# 使用 .crawl_config.json 中的默认配置
-python scripts/build_index.py
-
-# 覆盖 URL
-python scripts/build_index.py --url https://dydx.exchange/blog/
-
-# 使用自定义配置文件
-python scripts/build_index.py --config /path/to/config.json
-
-# 指定嵌入模型
-python scripts/build_index.py --model BAAI/bge-m3
-
-# 基于现有 HTML 重建分块/向量（parser/chunker 变更后推荐）
-python scripts/build_index.py --skip-crawl --rebuild
-
-# 全量重爬 + 重建（文档内容可能变化时）
+# 推荐：从当前配置的数据源全量重建索引
 python scripts/build_index.py --rebuild
 ```
 
-> **提示**：最近这轮 bug 修复没有给 `build_index.py` 新增 CLI 参数。
+> **提示**：高级/恢复模式请查看 `scripts/build_index.py` 顶部注释，或运行 `python scripts/build_index.py --help`。
+> 抓取源字段说明见 `config/README.md`。
 
 ### 4. 启动 Agent
 
@@ -108,7 +101,7 @@ MODEL=MiniMax-M2.7
 VECTORSTORE_DIR=./data/vectorstore
 
 # 可选：运行时嵌入模型覆盖
-# 优先级：EMBEDDING_MODEL > .crawl_config.json:model > BAAI/bge-m3
+# 运行时默认嵌入模型为 BAAI/bge-m3
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 
 # 可选：懒加载失败后的重试冷却时间（秒）
@@ -117,7 +110,7 @@ VECTORSTORE_RETRY_INTERVAL_SEC=30
 
 ## RAG_UNAVAILABLE 排查
 
-- 先看模型优先级：`.env` 里的 `EMBEDDING_MODEL` 会覆盖 `.crawl_config.json`。
+- 先看模型设置：`.env` 里的 `EMBEDDING_MODEL` 会覆盖运行时默认值（`BAAI/bge-m3`）。
 - 索引构建模型与运行时模型需要一致，否则可能触发向量维度不匹配。
 - 对于已缓存模型，运行时现在会优先使用本地 HF 快照，不依赖联网下载。
 
@@ -150,23 +143,22 @@ prelude/
 │   ├── src/index.ts                # 聊天界面，作为 subprocess 生成 bridge
 │   ├── package.json                # pnpm 管理，依赖 @mariozechner/pi-tui
 │   └── tsconfig.json
+├── app/                            # 运行时应用层
+│   ├── agent/                      # 极简 Agent Loop + 工具
+│   └── bridge/                     # JSONL 桥接（由 TUI 生成为 subprocess）
+├── rag/                            # RAG pipeline 层
+│   ├── crawlers/                   # HTML 抓取
+│   ├── parsers/                    # HTML/Markdown 解析
+│   ├── chunkers/                   # 语义分块
+│   └── embedders/                  # 向量化与存储
+├── config/
+│   ├── craw_list.yaml              # 抓取源注册表
+│   └── rag_pipeline.yaml           # RAG 管线默认参数
+├── data/                           # Pipeline 产物与向量库
 ├── scripts/
-│   └── build_index.py             # 索引构建脚本
-├── crawlers/
-│   └── gitbook_crawler.py         # Playwright 爬虫
-├── parsers/
-│   ├── html_to_markdown.py        # HTML → Markdown
-│   └── markdown_parser.py         # Markdown → MarkdownBlock
-├── chunkers/
-│   └── semantic_chunker.py        # MarkdownBlock → Document
-├── embedders/
-│   └── embedding_pipeline.py      # Document → Chroma
-├── agent/
-│   ├── agent_loop.py              # 极简 Agent Loop（~500 行）
-│   ├── tools.py                   # 工具定义 + 处理器
-│   └── system_prompt.py           # 系统提示词
-├── bridge/
-│   └── pi_bridge.py               # JSONL 桥接（由 TUI 生成为 subprocess）
+│   ├── build_index.py              # 索引构建脚本
+│   ├── analyze_chunks.py           # 通用 chunk token 分布分析
+│   └── investigate_chunk_outliers.py # 面向 OOM 的异常 chunk 调查
 ├── main.py                        # CLI 降级模式（无 TUI）
 ├── pyproject.toml
 ├── uv.lock

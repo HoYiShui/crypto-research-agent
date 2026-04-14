@@ -9,6 +9,8 @@ from typing import Optional
 import uuid
 import os
 
+from rag.pipeline_config import get_embedding_config
+
 # Load HF_TOKEN from environment (for authenticated downloads)
 HF_TOKEN = os.getenv("HF_TOKEN")
 if HF_TOKEN:
@@ -43,17 +45,31 @@ class EmbeddingPipeline:
 
     def __init__(
         self,
-        model_name: str = "BAAI/bge-m3",
-        encode_kwargs: dict = None,
-        vectorstore_dir: str = "./data/vectorstore"
+        model_name: str | None = None,
+        encode_kwargs: dict | None = None,
+        vectorstore_dir: str = "./data/vectorstore",
+        batch_size: int | None = None,
+        max_seq_length: int | None = None,
     ):
-        self.model_name = model_name
-        self.encode_kwargs = encode_kwargs or {"normalize_embeddings": True}
+        cfg = get_embedding_config()
+
+        self.model_name = model_name or str(cfg.get("model", "BAAI/bge-m3"))
+        normalize_embeddings = bool(cfg.get("normalize_embeddings", True))
+        self.encode_kwargs = {"normalize_embeddings": normalize_embeddings}
+        if encode_kwargs:
+            self.encode_kwargs.update(encode_kwargs)
+
+        self.batch_size = int(batch_size if batch_size is not None else cfg.get("batch_size", 4))
+        self.max_seq_length = int(
+            max_seq_length if max_seq_length is not None else cfg.get("max_seq_length", 1024)
+        )
         self.vectorstore_dir = Path(vectorstore_dir)
         self.vectorstore_dir.mkdir(parents=True, exist_ok=True)
 
         # Load embedding model (prefer local HF snapshot to avoid network flakiness)
-        self.model = self._load_embedding_model(model_name)
+        self.model = self._load_embedding_model(self.model_name)
+        if hasattr(self.model, "max_seq_length") and self.max_seq_length > 0:
+            self.model.max_seq_length = self.max_seq_length
 
         # Chroma client (persistent)
         self._client = chromadb.PersistentClient(
@@ -132,7 +148,7 @@ class EmbeddingPipeline:
 
         # Encode texts
         texts = [doc.page_content for doc in documents]
-        embeddings = self.model.encode(texts, **self.encode_kwargs)
+        embeddings = self.model.encode(texts, batch_size=self.batch_size, **self.encode_kwargs)
 
         # Add to Chroma
         metadatas = [doc.metadata for doc in documents]
@@ -184,11 +200,15 @@ class EmbeddingPipeline:
 
 
 def create_embedding_pipeline(
-    model_name: str = "BAAI/bge-m3",
-    persist_dir: str = "./data/vectorstore"
+    model_name: str | None = None,
+    persist_dir: str = "./data/vectorstore",
+    batch_size: int | None = None,
+    max_seq_length: int | None = None,
 ) -> EmbeddingPipeline:
     """Factory function to create EmbeddingPipeline"""
     return EmbeddingPipeline(
         model_name=model_name,
         vectorstore_dir=persist_dir,
+        batch_size=batch_size,
+        max_seq_length=max_seq_length,
     )

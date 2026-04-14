@@ -2,10 +2,10 @@
 Semantic Chunker: Convert MarkdownBlock[] to Document[]
 """
 from dataclasses import dataclass, field
-from typing import Optional
 from pathlib import Path
 
-from parsers.markdown_parser import MarkdownBlock, block_to_embedding_text
+from rag.parsers.markdown_parser import MarkdownBlock, block_to_embedding_text
+from rag.pipeline_config import get_chunking_config, get_embedding_config
 
 
 @dataclass
@@ -50,11 +50,79 @@ class SemanticChunker:
     - Code blocks: whole function as one chunk
     """
 
-    MAX_TOKENS_PER_CHUNK = 4096
-    WARN_TOKENS_PER_CHUNK = 2048
+    MAX_TOKENS_PER_CHUNK = 1024
+    WARN_TOKENS_PER_CHUNK = 768
 
-    def __init__(self):
+    def __init__(
+        self,
+        max_tokens_per_chunk: int | None = None,
+        warn_tokens_per_chunk: int | None = None,
+    ):
+        cfg = get_chunking_config()
+        emb_cfg = get_embedding_config()
+        self.MAX_TOKENS_PER_CHUNK = int(
+            max_tokens_per_chunk
+            if max_tokens_per_chunk is not None
+            else cfg.get("max_tokens_per_chunk", self.MAX_TOKENS_PER_CHUNK)
+        )
+        self.WARN_TOKENS_PER_CHUNK = int(
+            warn_tokens_per_chunk
+            if warn_tokens_per_chunk is not None
+            else cfg.get("warn_tokens_per_chunk", self.WARN_TOKENS_PER_CHUNK)
+        )
+        self.embedding_model_name = str(emb_cfg.get("model", "BAAI/bge-m3"))
         self.chunk_counter = 0
+        self._tokenizer = None
+        self._tokenizer_init_attempted = False
+
+    def _resolve_local_snapshot_path(self, model_name: str) -> Path | None:
+        if "/" not in model_name:
+            p = Path(model_name)
+            return p if p.exists() else None
+
+        cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+        repo_dir = cache_root / f"models--{model_name.replace('/', '--')}"
+        snapshots_dir = repo_dir / "snapshots"
+        refs_main = repo_dir / "refs" / "main"
+
+        if not snapshots_dir.exists():
+            return None
+
+        if refs_main.exists():
+            try:
+                revision = refs_main.read_text(encoding="utf-8").strip()
+                snapshot = snapshots_dir / revision
+                if snapshot.exists():
+                    return snapshot
+            except Exception:
+                pass
+
+        candidates = [p for p in snapshots_dir.iterdir() if p.is_dir()]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: p.stat().st_mtime)
+
+    def _get_model_tokenizer(self):
+        if self._tokenizer_init_attempted:
+            return self._tokenizer
+
+        self._tokenizer_init_attempted = True
+        try:
+            from transformers import AutoTokenizer
+
+            local_snapshot = self._resolve_local_snapshot_path(self.embedding_model_name)
+            if local_snapshot is not None:
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    str(local_snapshot),
+                    local_files_only=True,
+                )
+                # Token counting only: disable model sequence-length warning noise.
+                self._tokenizer.model_max_length = 10**9
+                return self._tokenizer
+        except Exception:
+            self._tokenizer = None
+
+        return self._tokenizer
 
     def _new_chunk_id(self) -> str:
         self.chunk_counter += 1
@@ -91,6 +159,15 @@ class SemanticChunker:
 
     def _process_group(self, heading_path: tuple, blocks: list[MarkdownBlock]) -> list[Chunk]:
         """Process a single heading_path group"""
+        # Guard rail: do not aggressively merge all orphan blocks (empty heading path),
+        # otherwise large navigation/noise sections may become one oversized chunk.
+        is_orphan_heading = (not heading_path) or all((not str(h).strip()) for h in heading_path)
+        if is_orphan_heading and len(blocks) > 1:
+            orphan_chunks: list[Chunk] = []
+            for block in blocks:
+                orphan_chunks.extend(self._process_group(heading_path, [block]))
+            return orphan_chunks
+
         chunks = []
 
         # Separate by block_type
@@ -240,6 +317,14 @@ class SemanticChunker:
             )
             piece_tokens = self._estimate_tokens(block_to_embedding_text(piece_block))
 
+            if piece_tokens > self.MAX_TOKENS_PER_CHUNK:
+                if bucket:
+                    chunks.append(self._make_chunk(heading_path, bucket, "text"))
+                    bucket = []
+                    bucket_tokens = 0
+                chunks.extend(self._split_single_oversized_piece(heading_path, block, piece))
+                continue
+
             if bucket and bucket_tokens + piece_tokens > self.MAX_TOKENS_PER_CHUNK:
                 chunks.append(self._make_chunk(heading_path, bucket, "text"))
                 bucket = [piece_block]
@@ -253,8 +338,90 @@ class SemanticChunker:
 
         return chunks
 
+    def _split_single_oversized_piece(
+        self,
+        heading_path: tuple,
+        block: MarkdownBlock,
+        piece: str,
+    ) -> list[Chunk]:
+        """
+        Split one oversized text piece by whitespace token budget.
+        This is a final fallback to guarantee chunk size constraints.
+        """
+        words = piece.split()
+        if not words:
+            return [self._make_chunk(heading_path, [block], "text")]
+
+        chunks: list[Chunk] = []
+        bucket_words: list[str] = []
+
+        def flush_bucket() -> None:
+            nonlocal bucket_words
+            if not bucket_words:
+                return
+            text = " ".join(bucket_words)
+            piece_block = MarkdownBlock(
+                block_id=block.block_id,
+                heading_path=block.heading_path,
+                heading_level=block.heading_level,
+                block_type=block.block_type,
+                content=text,
+                source_url=block.source_url,
+                raw_markdown=text,
+            )
+            chunks.append(self._make_chunk(heading_path, [piece_block], "text"))
+            bucket_words = []
+
+        for word in words:
+            candidate_words = bucket_words + [word]
+            candidate_text = " ".join(candidate_words)
+            candidate_block = MarkdownBlock(
+                block_id=block.block_id,
+                heading_path=block.heading_path,
+                heading_level=block.heading_level,
+                block_type=block.block_type,
+                content=candidate_text,
+                source_url=block.source_url,
+                raw_markdown=candidate_text,
+            )
+            candidate_tokens = self._estimate_tokens(block_to_embedding_text(candidate_block))
+
+            if not bucket_words and candidate_tokens > self.MAX_TOKENS_PER_CHUNK:
+                # Extremely long standalone token/word fallback.
+                text = word
+                while text:
+                    window = text[:256]
+                    text = text[256:]
+                    piece_block = MarkdownBlock(
+                        block_id=block.block_id,
+                        heading_path=block.heading_path,
+                        heading_level=block.heading_level,
+                        block_type=block.block_type,
+                        content=window,
+                        source_url=block.source_url,
+                        raw_markdown=window,
+                    )
+                    chunks.append(self._make_chunk(heading_path, [piece_block], "text"))
+                continue
+
+            if bucket_words and candidate_tokens > self.MAX_TOKENS_PER_CHUNK:
+                flush_bucket()
+                bucket_words = [word]
+            else:
+                bucket_words = candidate_words
+
+        flush_bucket()
+        return chunks
+
     def _estimate_tokens(self, text: str) -> int:
-        """Estimate token count (simple: chars/4)"""
+        """Estimate token count with embedding-model tokenizer when available."""
+        tokenizer = self._get_model_tokenizer()
+        if tokenizer is not None:
+            try:
+                return len(tokenizer.encode(text, add_special_tokens=True, truncation=False))
+            except Exception:
+                pass
+
         try:
             import tiktoken
             enc = tiktoken.get_encoding("cl100k_base")
@@ -264,8 +431,15 @@ class SemanticChunker:
             return len(text) // 4
 
 
-def blocks_to_documents(blocks: list[MarkdownBlock]) -> list[Document]:
+def blocks_to_documents(
+    blocks: list[MarkdownBlock],
+    max_tokens_per_chunk: int | None = None,
+    warn_tokens_per_chunk: int | None = None,
+) -> list[Document]:
     """Convert MarkdownBlocks to LangChain Documents"""
-    chunker = SemanticChunker()
+    chunker = SemanticChunker(
+        max_tokens_per_chunk=max_tokens_per_chunk,
+        warn_tokens_per_chunk=warn_tokens_per_chunk,
+    )
     chunks = chunker.chunk(blocks)
     return [chunk.to_document() for chunk in chunks]
